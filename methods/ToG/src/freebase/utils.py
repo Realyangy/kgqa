@@ -65,58 +65,88 @@ def del_unknown_entity(entity_pairs):
     return [(name, eid) for name, eid in entity_pairs if name != "UnName_Entity"]
 
 
+# 解析LLM输出的json
+def parse_scored_candidates(response, candidate_count, require_all=False):
+    if not isinstance(response, str):
+        raise ValueError("LLM response is not a string")
+
+    text = response.strip()
+
+    # 兼容模型偶尔输出的Markdown代码块
+    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+
+    # 解析JSON
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError("Invalid JSON response") from error
+
+    if not isinstance(data, dict) or not isinstance(data.get("scores"), list):
+        raise ValueError("JSON must contain a 'scores' list")
+
+    selected_scores = {}
+    for item in data["scores"]:
+        if not isinstance(item, dict):
+            raise ValueError("Invalid score item")
+
+        candidate_id = item.get("id")
+        score = item.get("score")
+        if type(candidate_id) is not int:
+            raise ValueError(f"Invalid candidate ID: {candidate_id}")
+        if not 1 <= candidate_id <= candidate_count:
+            raise ValueError(f"Candidate ID out of range: {candidate_id}")
+        
+        if type(score) not in (int, float) or not 0 <= score <= 1:
+            raise ValueError(f"Invalid score: {score}")
+        if candidate_id in selected_scores:
+            raise ValueError(f"Duplicate candidate ID: {candidate_id}")
+
+        selected_scores[candidate_id] = float(score)
+
+    # 实体评分需要覆盖全部候选
+    if require_all and len(selected_scores) != candidate_count:
+        raise ValueError(f"Expected {candidate_count} scores, got {len(selected_scores)}")
+
+    return selected_scores
+
+
 # 解析LLM返回的关系剪枝结果
-def clean_relations(string, entity_id, entity_name, head_relations):
-    pattern = r"{\s*(?P<relation>[^()]+)\s+\(Score:\s+(?P<score>[0-9.]+)\)}"
-    relations=[]
-    for match in re.finditer(pattern, string):
-        relation = match.group("relation").strip()
-        if ';' in relation:
+def clean_relations(response, entity_id, entity_name, relation_candidates):
+    selected_scores = parse_scored_candidates(response, len(relation_candidates), require_all=False)
+
+    relations = []
+    for candidate_id, score in selected_scores.items():
+        if score == 0:
             continue
 
-        score = match.group("score")
-        if not relation or not score:
-            return False, "LLM relation prune output uncompleted"
-        try:
-            score = float(score)
-        except ValueError:
-            return False, "LLM relation prune output invalid score"
-        
-        if relation in head_relations:
-            relations.append({"entity_id": entity_id, "entity_name": entity_name, "relation": relation, "score": score, "head": True})
-        else:
-            relations.append({"entity_id": entity_id, "entity_name": entity_name, "relation": relation, "score": score, "head": False})
-    
-    if not relations: 
-        return False, "LLM relation prune failed, no relations found"
-    return True, relations
+        # 根据编号取回真实关系及方向
+        candidate = relation_candidates[candidate_id - 1]
+        relations.append({
+            "entity_id": entity_id,
+            "entity_name": entity_name,
+            "relation": candidate["relation"],
+            "score": score,
+            "head": candidate["head"]
+        })
+    return bool(relations), relations
 
 
 # LLM实体选择结果无法解析时，保留原始回复供错误样本记录
 class EntitySelectionParseError(ValueError):
     def __init__(self, raw_output, candidates):
-        super().__init__("Could not parse entity selection as a list of names")
+        super().__init__("Could not parse entity scoring JSON")
         self.raw_output = raw_output
         self.candidates = candidates
 
 
 # 解析LLM返回的实体名称列表，并仅保留候选实体中的名称
-def parse_selected_entities(string, entity_candidates):
-    left = string.rfind("[")
-    right = string.rfind("]")
-    if left < 0 or right <= left:
-        raise EntitySelectionParseError(string, entity_candidates)
-
+def parse_selected_entities(response, entity_candidates):
     try:
-        selected = ast.literal_eval(string[left:right + 1])
-    except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError) as error:
-        raise EntitySelectionParseError(string, entity_candidates) from error
-
-    if not isinstance(selected, list) or any(not isinstance(name, str) for name in selected):
-        raise EntitySelectionParseError(string, entity_candidates)
-
-    candidate_names = set(entity_candidates)
-    return list(dict.fromkeys(name for name in selected if name in candidate_names))
+        return parse_scored_candidates(response, len(entity_candidates), require_all=True)
+    except ValueError as error:
+        raise EntitySelectionParseError(response, entity_candidates) from error
 
 
 # 保存样本结果，保存的内容包括问题、LLM的回答、检索到的三元组

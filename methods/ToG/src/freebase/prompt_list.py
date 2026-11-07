@@ -1,24 +1,36 @@
 from string import Template
 
-extract_relation_prompt = Template("""Please retrieve $relation_num relations (separated by semicolon) that contribute to the question and rate their contribution on a scale from 0 to 1 (the sum of the scores of $relation_num relations is 1).
+extract_relation_prompt = Template("""Please retrieve $relation_num relations that contribute to the question from the numbered candidate relations (with their directions) and rate their contribution on a scale from 0 to 1. Return the selected relation numbers and their scores in JSON format.
 Q: Name the president of the country whose main spoken language was Brahui in 1980?
 Topic Entity: Brahui Language
-Relations: language.human_language.main_country; language.human_language.language_family; language.human_language.iso_639_3_code; base.rosetta.languoid.parent; language.human_language.writing_system; base.rosetta.languoid.languoid_class; language.human_language.countries_spoken_in; kg.object_profile.prominent_type; base.rosetta.languoid.document; base.ontologies.ontology_instance.equivalent_instances; base.rosetta.languoid.local_name; language.human_language.region
-A: 1. {language.human_language.main_country (Score: 0.4)}: This relation is highly relevant as it directly relates to the country whose president is being asked for, and the main country where Brahui language is spoken in 1980.
-2. {language.human_language.countries_spoken_in (Score: 0.3)}: This relation is also relevant as it provides information on the countries where Brahui language is spoken, which could help narrow down the search for the president.
-3. {base.rosetta.languoid.parent (Score: 0.2)}: This relation is less relevant but still provides some context on the language family to which Brahui belongs, which could be useful in understanding the linguistic and cultural background of the country in question.
+Relations: [1] [outgoing] language.human_language.main_country [2] [outgoing] language.human_language.language_family [3] [outgoing] language.human_language.iso_639_3_code [4] [incoming] base.rosetta.languoid.parent [5] [outgoing] language.human_language.countries_spoken_in
+Output: {
+  "scores": [
+    {"id": 1, "score": 0.4},
+    {"id": 5, "score": 0.3},
+    {"id": 4, "score": 0.2}
+  ]
+}
 
 Q: $question
 Topic Entity: $entity_name
 Relations: $relations
-A:""")
+Output:""")
 
-select_entity_candidates_prompt = Template("""Please select the entities that contribute to answering the question. Output only their names as a Python list from Entities, or [] if none are useful.
+select_entity_candidates_prompt = Template("""Please score the entities' contribution to the question on a scale from 0 to 1. Return the entity numbers and their scores in JSON format.
 Q: The movie featured Miley Cyrus and was produced by Tobin Armbrust?
-Current Entity: Tobin Armbrust
 Relation: film.producer.film
-Entities: ['The Resident', 'So Undercover', 'Let Me In', 'Begin Again', 'The Quiet Ones', 'A Walk Among the Tombstones']
-Output: ['So Undercover']
+Entities: [1] The Resident [2] So Undercover [3] Let Me In [4] Begin Again [5] The Quiet Ones [6] A Walk Among the Tombstones
+Output: {
+  "scores": [
+    {"id": 1, "score": 0.0},
+    {"id": 2, "score": 1.0},
+    {"id": 3, "score": 0.0},
+    {"id": 4, "score": 0.0},
+    {"id": 5, "score": 0.0},
+    {"id": 6, "score": 0.0}
+  ]
+}
 
 Q: $question
 Current Entity: $entity_name

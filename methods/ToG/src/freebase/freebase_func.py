@@ -109,22 +109,24 @@ def if_all_zero(topn_scores):
 
 
 # 构造关系剪枝提示词
-def construct_relation_prune_prompt(question, entity_name, total_relations, args):
+def construct_relation_prune_prompt(question, entity_name, relation_candidates, args):
+    numbered_relations = " ".join(f"[{i}] [{'outgoing' if item['head'] else 'incoming'}] {item['relation']}" for i, item in enumerate(relation_candidates, start=1))
     return extract_relation_prompt.substitute(
         relation_num=args.width,
         question=question,
         entity_name=entity_name,
-        relations='; '.join(total_relations),
+        relations=numbered_relations,
     )
 
 
-# 构造实体剪枝提示词
-def construct_entity_selection_prompt(question, entity_name, relation, entity_candidates):
+# 构造实体评分提示词
+def construct_entity_selection_prompt(question, entity_name, relation, entity_pairs):
+    numbered_entities = " ".join(f"[{i}] {name}" for i, (name, entity_id) in enumerate(entity_pairs, start=1))
     return select_entity_candidates_prompt.substitute(
         question=question,
         entity_name=entity_name,
         relation=relation,
-        entity_candidates=str(entity_candidates),
+        entity_candidates=numbered_entities,
     )
 
 
@@ -148,24 +150,22 @@ def relation_search_prune(entity_id, entity_name, pre_relations, pre_head, quest
     else:
         head_relations = list(set(head_relations) - set(pre_relations))
 
-    head_relations = list(set(head_relations))
-    tail_relations = list(set(tail_relations))
-    total_relations = head_relations+tail_relations
+    # 关系去重
+    head_relations = sorted(set(head_relations))
+    tail_relations = sorted(set(tail_relations))
 
-    # 确保所有关系的顺序相同
-    total_relations.sort()
+    # 构建带方向的候选关系列表
+    relation_candidates = ([{"relation": relation, "head": True} for relation in head_relations] + [{"relation": relation, "head": False} for relation in tail_relations])
 
-    # 调用LLM进行关系剪枝
-    prompt = construct_relation_prune_prompt(question, entity_name, total_relations, args)
+    # 保证候选顺序稳定
+    relation_candidates.sort(key=lambda item: (item["relation"], not item["head"]))
+
+    # 构造Prompt
+    prompt = construct_relation_prune_prompt(question, entity_name, relation_candidates, args)
     result = run_llm(prompt, args.temperature_exploration, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    flag, retrieve_relations_with_scores = clean_relations(result, entity_id, entity_name, head_relations)
+    flag, retrieve_relations_with_scores = clean_relations(result, entity_id, entity_name, relation_candidates)
 
-    args._last_relation_search = {
-        "all_candidates": [
-            {"relation": relation, "head": relation in head_relations}
-            for relation in total_relations
-        ]
-    }
+    args._last_relation_search = {"all_candidates": relation_candidates}
 
     if flag:
         return retrieve_relations_with_scores
@@ -206,19 +206,20 @@ def entity_select(question, entity_candidates_id, relation_score, relation, enti
         name, eid = entity_pairs[0]
         return [relation_score], [name], [eid]
 
-    entity_pairs.sort()
-    entity_candidates, entity_candidates_id = map(list, zip(*entity_pairs))
-    entity_name = id2entity_name_or_type(entity_id)
-    prompt = construct_entity_selection_prompt(question, entity_name, relation, entity_candidates)
-    response = run_llm(prompt, args.temperature_exploration, 1024, args.base_url, args.api_key, args.LLM_type)
-    selected_names = set(parse_selected_entities(response, entity_candidates))
+    # 根据名称和ID排序，保证编号顺序稳定
+    entity_pairs.sort(key=lambda item: (item[0], item[1]))
 
-    # 同名实体只保留列表中第一次出现的ID
-    seen_names = set()
-    scores = []
-    for name in entity_candidates:
-        scores.append(relation_score if name in selected_names and name not in seen_names else 0.0)
-        seen_names.add(name)
+    # 分离实体名称和ID，保留原有返回结构
+    entity_candidates = [name for name, eid in entity_pairs]
+    entity_candidates_id = [eid for name, eid in entity_pairs]
+    entity_name = id2entity_name_or_type(entity_id)
+
+    prompt = construct_entity_selection_prompt(question, entity_name, relation, entity_pairs)
+    response = run_llm(prompt, args.temperature_exploration, 1024, args.base_url, args.api_key, args.LLM_type)
+    entity_scores = parse_selected_entities(response, entity_candidates)
+
+    # 计算关系得分与实体得分的乘积
+    scores = [relation_score * entity_scores[i] for i in range(1, len(entity_candidates) + 1)]
     return scores, entity_candidates, entity_candidates_id
 
 

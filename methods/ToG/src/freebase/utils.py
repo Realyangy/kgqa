@@ -136,16 +136,47 @@ def clean_relations(response, entity_id, entity_name, relation_candidates):
 # LLM实体选择结果无法解析时，保留原始回复供错误样本记录
 class EntitySelectionParseError(ValueError):
     def __init__(self, raw_output, candidates):
-        super().__init__("Could not parse entity scoring JSON")
+        super().__init__("Could not parse entity selection JSON")
         self.raw_output = raw_output
         self.candidates = candidates
 
 
-# 解析LLM返回的实体名称列表，并仅保留候选实体中的名称
+# 解析LLM返回的实体选择结果
 def parse_selected_entities(response, entity_candidates):
     try:
-        return parse_scored_candidates(response, len(entity_candidates), require_all=True)
-    except ValueError as error:
+        text = response.strip()
+        match = re.fullmatch( r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+
+        # 解析JSON
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("Invalid JSON object")
+
+        selected_ids = data.get("selected_ids")
+        if not isinstance(selected_ids, list):
+            raise ValueError("selected_ids must be a list")
+
+        # 验证实体编号
+        candidate_count = len(entity_candidates)
+        selected_set = set()
+
+        for candidate_id in selected_ids:
+            if type(candidate_id) is not int:
+                raise ValueError(f"Invalid entity ID: {candidate_id}")
+
+            if not 1 <= candidate_id <= candidate_count:
+                raise ValueError(f"Entity ID out of range: {candidate_id}")
+
+            if candidate_id in selected_set:
+                raise ValueError(f"Duplicate entity ID: {candidate_id}")
+
+            selected_set.add(candidate_id)
+
+        return selected_set
+
+    except (ValueError, TypeError) as error:
         raise EntitySelectionParseError(response, entity_candidates) from error
 
 

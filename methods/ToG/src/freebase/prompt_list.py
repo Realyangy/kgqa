@@ -17,20 +17,11 @@ Topic Entity: $entity_name
 Relations: $relations
 Output:""")
 
-select_entity_candidates_prompt = Template("""Please score the entities' contribution to the question on a scale from 0 to 1. Return the entity numbers and their scores in JSON format.
+select_entity_candidates_prompt = Template("""Please select the entities that contribute to answering the question. Return their numbers in JSON format, or an empty list if none are useful.
 Q: The movie featured Miley Cyrus and was produced by Tobin Armbrust?
 Relation: film.producer.film
 Entities: [1] The Resident [2] So Undercover [3] Let Me In [4] Begin Again [5] The Quiet Ones [6] A Walk Among the Tombstones
-Output: {
-  "scores": [
-    {"id": 1, "score": 0.0},
-    {"id": 2, "score": 1.0},
-    {"id": 3, "score": 0.0},
-    {"id": 4, "score": 0.0},
-    {"id": 5, "score": 0.0},
-    {"id": 6, "score": 0.0}
-  ]
-}
+Output: {"selected_ids": [2]}
 
 Q: $question
 Current Entity: $entity_name

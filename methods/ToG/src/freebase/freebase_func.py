@@ -216,12 +216,11 @@ def entity_select(question, entity_candidates_id, relation_score, relation, enti
 
     prompt = construct_entity_selection_prompt(question, entity_name, relation, entity_pairs)
     response = run_llm(prompt, args.temperature_exploration, 1024, args.base_url, args.api_key, args.LLM_type)
-    entity_scores = parse_selected_entities(response, entity_candidates)
+    selected_ids = parse_selected_entities(response, entity_candidates)
 
-    # 计算关系得分与实体得分的乘积
-    scores = [relation_score * entity_scores[i] for i in range(1, len(entity_candidates) + 1)]
+    # 选中实体得分为1，未选中实体得分为0
+    scores = [relation_score if i in selected_ids else 0.0 for i in range(1, len(entity_candidates) + 1)]
     return scores, entity_candidates, entity_candidates_id
-
 
 # 收集整理当前关系下的所有候选实体的信息（存储在下方以total开头的六个变量中），用于后续的实体剪枝
 def update_history(entity_candidates, entity, scores, entity_candidates_id, total_candidates, total_scores, total_relations, total_entities_id, total_topic_entities, total_head):

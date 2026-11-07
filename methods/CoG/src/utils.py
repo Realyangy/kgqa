@@ -1,0 +1,410 @@
+import os
+import re
+import json
+import time
+import random
+import pickle
+import numpy as np
+from pathlib import Path
+from openai import OpenAI
+from sentence_transformers import util, SentenceTransformer
+
+from prompt_list import *
+from logging_utils import logger
+
+
+def retrieve_top_docs(query, docs, model, width=3):
+    """用于 CoG 的候选实体粗筛。"""
+    query_emb = model.encode(query)
+    doc_emb = model.encode(docs)
+    scores = util.dot_score(query_emb, doc_emb)[0].cpu().tolist()
+    doc_score_pairs = sorted(list(zip(docs, scores)), key=lambda x: x[1], reverse=True)
+    top_docs = [pair[0] for pair in doc_score_pairs[:width]]
+    top_scores = [pair[1] for pair in doc_score_pairs[:width]]
+    return top_docs, top_scores
+
+
+# 调用LLM
+def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-turbo"):
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    messages = [
+        {
+            "role": "system",
+            "content": "You are an AI assistant that helps people find information."
+        },
+        {
+            "role": "user",
+            "content": prompt
+        }
+    ]
+
+    extra_body = None
+    if "qwen" in engine.lower():
+        extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
+    elif "deepseek" in engine.lower():
+        extra_body = {"thinking": {"type": "disabled"}}
+
+    for _ in range(3):
+        try:
+            completion = client.chat.completions.create(
+                model=engine,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                frequency_penalty=0,
+                presence_penalty=0,
+                extra_body=extra_body
+            )
+            result = completion.choices[0].message.content or ""
+            usage = completion.usage
+            token_num = {
+                "total": usage.total_tokens if usage else 0,
+                "input": usage.prompt_tokens if usage else 0,
+                "output": usage.completion_tokens if usage else 0
+            }
+            return result, token_num
+        except Exception as e:
+            logger.info("OpenAI error, retry: %s", e)
+            time.sleep(2)
+
+    raise RuntimeError("Failed to call LLM after 3 retries")
+
+def convert_dict_name(ent_rel_ent_dict, entid_name):
+    name_dict = {}
+    for topic_e, h_t_dict in ent_rel_ent_dict.items():
+        if entid_name[topic_e] not in name_dict.keys():
+            name_dict[entid_name[topic_e]] = {}
+
+        for h_t, r_e_dict in h_t_dict.items():
+            if h_t not in name_dict[entid_name[topic_e]].keys():
+                name_dict[entid_name[topic_e]][h_t] = {}
+            
+            for rela, e_list in r_e_dict.items():
+                if rela not in name_dict[entid_name[topic_e]][h_t].keys():
+                    name_dict[entid_name[topic_e]][h_t][rela] = []
+                for ent in e_list:
+                    if entid_name[ent] not in name_dict[entid_name[topic_e]][h_t][rela]:
+                        name_dict[entid_name[topic_e]][h_t][rela].append(entid_name[ent])
+    return name_dict
+
+    
+def save_2_jsonl(question, question_string, answer, cluster_chain_of_entities, call_num, all_t, start_time, output_file):
+    tt = time.time()-start_time
+    dict = {question_string:question, "results": answer, "reasoning_chains": cluster_chain_of_entities, "call_num": call_num, "total_token": all_t['total'], "input_token": all_t['input'], "output_token": all_t['output'], "time": tt}
+    
+    with open(output_file, "a", encoding='utf-8') as outfile:
+        json_str = json.dumps(dict, ensure_ascii=False)
+        outfile.write(json_str + "\n")
+
+
+def extract_add_ent(string):
+    first_brace_p = string.find('[')
+    last_brace_p = string.rfind(']')
+    string = string[first_brace_p:last_brace_p+1]
+    try:
+        new_string = eval(string)
+    except:
+        s_list = string.split('\', \'')
+        if len(s_list) == 1:
+            new_string = [s_list[0].strip('[\'').strip('\']')]
+        else:
+            new_string = [s.strip('[\'').strip('\']') for s in s_list]
+    return new_string
+
+def extract_memory(string):
+    first_brace_p = string.find('{')
+    last_brace_p = string.rfind('}')
+    string = string[first_brace_p:last_brace_p+1]
+    return string
+
+def extract_reason_and_anwer(string):
+
+    try:
+        first_brace_p = string.find('{')
+        last_brace_p = string.rfind('}')
+        if first_brace_p != -1 and last_brace_p != -1:
+            string = string[first_brace_p:last_brace_p+1]
+            
+        answer = re.search(r'"Answer":\s*"(.*?)"', string)
+        if answer:
+            answer = answer.group(1)
+        else:
+
+            match = re.search(r'"Answer":\s*(\[[^\]]+\])', string)
+            if match:
+                answer = match.group(1)
+            else:
+                answer = "Null"
+
+        reason_match = re.search(r'"R":\s*"(.*?)"', string)
+        reason = reason_match.group(1) if reason_match else "No reason found"
+        
+        sufficient_match = re.search(r'"Sufficient":\s*"(.*?)"', string)
+        sufficient = sufficient_match.group(1) if sufficient_match else "No"
+        
+        # print("Answer:", answer)
+        # print("Reason:", reason)
+        # print("Sufficient:", sufficient)
+        return answer, reason, sufficient
+    except Exception as e:
+        logger.info("Error parsing answer: %s", e)
+        return "Null", "Parse Error", "No"
+
+def extract_add_and_reason(string):
+    try:
+        first_brace_p = string.find('{')
+        last_brace_p = string.rfind('}')
+        string = string[first_brace_p:last_brace_p+1]
+        
+        flag_match = re.search(r'"Add":\s*"(.*?)"', string)
+        flag = flag_match.group(1) if flag_match else "No"
+        
+        reason_match = re.search(r'"Reason":\s*"(.*?)"', string)
+        reason = reason_match.group(1) if reason_match else ""
+
+        logger.info("Add: %s", flag)
+        logger.info("Reason: %s", reason)
+        if 'yes' in flag.lower():
+            return True, reason
+        else:
+            return False, reason
+    except:
+        return False, ""
+
+def generate_without_explored_paths(question, subquestions, args):
+    prompt = cot_prompt + question 
+    response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
+    return response, token_num
+
+def break_question(question, args): 
+    prompt = subobjective_prompt + question
+    response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
+    first_brace_p = response.find('[')
+    last_brace_p = response.rfind(']')
+    if first_brace_p != -1 and last_brace_p != -1:
+        response = response[first_brace_p:last_brace_p+1]
+    return response, token_num
+
+def get_subquestions(q_mem_f_path, question, args):
+    sub_questions, token_num = break_question(question, args)
+    with open(q_mem_f_path+'/'+'subq', 'w', encoding='utf-8') as f:
+        f.write(str(sub_questions))
+    return sub_questions, token_num
+
+
+def reflection(question, selected_entity_ids, depth_entities_relations_entities_dict, entity_id_to_name, entity_name_to_id, memory_path, results, cluster_chain_of_entities, args, model):
+    cur_call_time = 0
+    cur_token = {'total': 0, 'input': 0, 'output': 0}
+
+    with open(memory_path+'/mem', 'r', encoding='utf-8') as f:
+        history_memory = f.read()
+
+    if all(elem == "[FINISH_ID]" for elem in selected_entity_ids):
+        remaining_entity_ids = []
+    else:
+        remaining_entity_ids = [elem for elem in selected_entity_ids if elem != "[FINISH_ID]"]
+    
+
+    all_entities_set = set()
+    for depth, entity_relation_entity_dict in depth_entities_relations_entities_dict.items():
+        for topic_entity, head_tail_dict in entity_relation_entity_dict.items():
+            all_entities_set.add(topic_entity)
+            for direction, relation_entities_dict in head_tail_dict.items():
+                for relation, entities_list in relation_entities_dict.items():
+
+                    if all(entity_id_to_name[item].startswith('m.') or entity_id_to_name[item].startswith('g.') for item in entities_list) and len(entities_list) > 10:
+                        entities_list = random.sample(entities_list, 10)
+                        
+
+                    if len(entities_list) > 70:
+                        #print('··········exceed 70 entities··········')
+                        sorted_e_list = [entity_id_to_name[entity_id] for entity_id in entities_list]
+                        topn_entities, topn_scores = retrieve_top_docs(question, sorted_e_list, model, 70)
+                        # print('sentence:', topn_entities)
+                        entities_list = [entity_name_to_id[e_n] for e_n in topn_entities]
+                        all_entities_set |= (set(entities_list))
+                    else:
+                        all_entities_set |= (set(entities_list))  
+    
+    clean_candidates_set = set()
+    id_count = 0  
+    
+    for entity_id in all_entities_set:
+        name = entity_id_to_name.get(entity_id, entity_id)
+        is_id = str(name).startswith('m.') or str(name).startswith('g.') or str(name).isdigit()
+        
+        if not is_id:
+
+            clean_candidates_set.add(entity_id)
+        else:
+
+            if id_count < 5:
+                clean_candidates_set.add(entity_id)
+                id_count += 1
+
+
+    if not clean_candidates_set and all_entities_set:
+        clean_candidates_set = set(list(all_entities_set)[:5])
+
+
+    all_entities_set = clean_candidates_set
+
+
+    chain_prompt = '\n'.join([', '.join([str(x) for x in chain]) for sublist in cluster_chain_of_entities for chain in sublist])
+    
+
+    prompt = judge_reverse+question+'\nEntities set to be retrieved: ' + str(list(set(sorted([entity_id_to_name[entity_id] for entity_id in remaining_entity_ids])))) +'\nMemory: '+history_memory+'\nKnowledge Triplets:'+chain_prompt
+
+    cur_call_time += 1
+    response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
+    for kk in token_num.keys():
+        cur_token[kk] += token_num[kk]
+
+    flag, reason = extract_add_and_reason(response)
+
+    if flag:
+
+        other_entities = sorted(list(all_entities_set - set(remaining_entity_ids)))
+        other_entities_name = [entity_id_to_name[entity_id] for entity_id in other_entities]
+        
+        logger.info("filter already %s %s %s", [entity_id_to_name[entity_id] for entity_id in remaining_entity_ids], [entity_id_to_name[entity_id] for entity_id in all_entities_set], other_entities_name)
+
+
+        prompt = add_ent_prompt+question+'\nReason: '+reason+'\nCandidate Entities: ' + str(sorted(other_entities_name))+'\nMemory: '+history_memory
+
+        cur_call_time += 1
+        response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
+
+        for kk in token_num.keys():
+            cur_token[kk] += token_num[kk]
+
+        reflection_entity_list = extract_add_ent(response)
+
+        reflection_entity_list = [entity_name_to_id[entity_id] for entity_id in reflection_entity_list if entity_id in other_entities_name]
+        reflection_entity_list = sorted(reflection_entity_list)
+        if reflection_entity_list:
+            logger.info("add reverse ent: %d %s", len(reflection_entity_list), [entity_id_to_name[entity_id] for entity_id in reflection_entity_list])
+            return remaining_entity_ids, reflection_entity_list, cur_call_time, cur_token
+            
+    return remaining_entity_ids, [], cur_call_time, cur_token
+
+    
+def prepare_dataset(dataset_name):
+    if dataset_name == 'cwq':
+        with open("../../../data/test/cwq.json", encoding='utf-8') as f:
+            datas = json.load(f)
+        question_string = 'question'
+    elif dataset_name == 'webqsp':
+        with open("../../../data/test/webqsp.json", encoding='utf-8') as f:
+            datas = json.load(f)
+        question_string = 'RawQuestion'
+    elif dataset_name == 'grailqa':
+        with open("../../../data/test/graliqa.json", encoding='utf-8') as f:
+            datas = json.load(f)
+        question_string = 'question'
+    else:
+        logger.info("dataset not found, you should pick from {cwq, webqsp, grailqa}.")
+        exit(-1)
+    return datas, question_string
+
+
+# 关系蓝图检索器
+class SkeletonRetriever:
+    def __init__(self, index_path, model_name):
+        try:
+            # 读取关系蓝图数据库
+            with open(index_path, 'rb') as f:
+                data = pickle.load(f)
+            self.data = data['data']
+            self.corpus_emb = data['embeddings']
+
+            # 加载嵌入模型
+            if os.path.exists(model_name):
+                self.model = SentenceTransformer(model_name)
+            else:
+                self.model = SentenceTransformer('msmarco-distilbert-base-tas-b')
+            self.is_loaded = True
+
+        except Exception as e:
+            logger.info("Warning: Failed to load index (%s). Speculation will be disabled.", e)
+            self.is_loaded = False
+
+
+    def retrieve(self, query, topk=2):
+        if not self.is_loaded:
+            return [], []
+
+        # 计算问题嵌入，并与数据库中的嵌入计算相似度，返回TopK
+        query_emb = self.model.encode(query)
+        scores = util.cos_sim(query_emb, self.corpus_emb)[0]
+        scores_np = scores.cpu().numpy()
+        top_k_indices = np.argsort(-scores_np)[:topk]
+        return [self.data[i] for i in top_k_indices], scores_np[top_k_indices]
+
+
+# 根据检索结果生成当前问题的关系蓝图
+def speculate_skeleton_chain(question, topic_entity_names, retriever, args, model): 
+    token_num = {'total': 0, 'input': 0, 'output': 0, 'calls': 0}
+    if not retriever or not getattr(retriever, 'is_loaded', False):
+        return [], token_num, None, "FAILED"
+    
+    try:
+        masked_question = mask_entities(question, topic_entity_names)
+        logger.info("Masked Question: %s", masked_question)
+
+        # 检索结果
+        exemplars, scores = retriever.retrieve(masked_question, topk=5) 
+
+        # 相似度超过阈值时，直接使用
+        if len(scores) > 0 and scores[0] > args.skeleton_similarity_threshold:
+            logger.info("High similarity (%.4f) detected!\nQuestion: %s\nSkeleton: %s", scores[0], exemplars[0]['question'], exemplars[0]['skeleton'])
+            skeleton = [s.strip() for s in exemplars[0]['skeleton'].split('->')]
+            return skeleton, token_num, exemplars[0]['skeleton'], "DIRECT_COPY"
+
+        if len(scores) > 0:
+            logger.info("--- Retrieved Exemplars (Top-1 Score: %.4f) ---", scores[0])
+            for i, ex in enumerate(exemplars):
+                logger.info("[%d]\nQuestion: %s\nSkeleton: %s", i, ex['question'], ex['skeleton'])
+            logger.info("---------------------------")
+        
+        if len(exemplars) < 2:
+            return [], token_num, None, "FAILED"
+
+        # 否则取TopK=2个，让LLM参考生成
+        prompt = speculate_prompt.format(
+            q1=exemplars[0]['question'], s1=exemplars[0]['skeleton'],
+            q2=exemplars[1]['question'], s2=exemplars[1]['skeleton'],
+            question=question
+        )
+        response, token = run_llm(prompt, temperature=0.0, max_tokens=150, base_url=args.base_url, api_key=args.api_key, engine=args.LLM_type)
+        for token_type in token:
+            if token_type != 'calls':
+                token_num[token_type] += token.get(token_type, 0)
+        token_num['calls'] += token.get('calls', 0)
+
+        # 解析模型输出
+        clean_resp = response.strip().split('\n')[0]
+        if "Output:" in clean_resp:
+            clean_resp = clean_resp.split("Output:")[-1].strip()
+
+        skeleton = [s.strip() for s in clean_resp.split('->')]
+        skeleton = [s for s in skeleton if '[' not in s and len(s) > 1]
+        if len(skeleton) > 0:
+            logger.info("Speculation Generated: %s", skeleton)
+            logger.info("---------------------------")
+            return skeleton, token_num, clean_resp, "GENERATED"
+            
+    except Exception as e:
+        logger.info("[Speculation Warning] Failed: %s", e)
+
+    return [], token_num, None, "FAILED"
+
+
+# 将问题中的起点实体信息隐去，用mask代替
+def mask_entities(question, entity_names, mask="[ENT]"):
+    masked_q = question
+    sorted_names = sorted(entity_names, key=len, reverse=True)
+    for name in sorted_names:
+        if name and name in masked_q:
+            masked_q = re.sub(r'\b' + re.escape(name) + r'\b', mask, masked_q, flags=re.IGNORECASE)
+    return masked_q

@@ -1,3 +1,5 @@
+from string import Template
+
 subobjective_prompt = """Please break down the process of answering the question into as few subobjectives as possible based on semantic analysis.
 Here is an example: 
 Q: Which of the countries in the Caribbean has the smallest country calling code?
@@ -132,41 +134,40 @@ Q: """
 
 
 
-update_mem_prompt = """Based on the provided information (which may have missing parts and require further retrieval) and your own knowledge, output the currently known information required to achieve the subobjectives.
+update_mem_prompt = Template("""Based on the provided information (which may have missing parts and require further retrieval) and your own knowledge, output the currently known information required to achieve the subobjectives.
 Here is an example:
-Q: Find the person who said "Taste cannot be controlled by law", what did this person die from?
+Question: Find the person who said "Taste cannot be controlled by law", what did this person die from?
 Subobjectives: ['Search the person who said "Taste cannot be controlled by law"', 'Search the cause of death for that person']
-Memory: 
+Memory:
 Knowledge Triplets: Taste cannot be controlled by law. media_common.quotation.author [Thomas Jefferson]
 Output: {
     "1": "Thomas Jefferson said 'Taste cannot be controlled by law'.",
     "2": "It is not mentioned, and I also don't know."
 }
 
-Now you need to directly output the results of the following question in JSON format without other information or notes. 
-Q: """
+Now you need to directly output the results of the following question in JSON format without other information or notes.
+Question: $question
+Subobjectives: $subobjectives
+Memory: $memory
+Knowledge Triplets: $knowledge_triplets
+Output: """)
 
 
-
-answer_depth_prompt = """Please answer the question based on the memory, related knowledge triplets and your knowledge.
-
-Here are examples:
-Q: Find the person who said \"Taste cannot be controlled by law\", what did this person die from?
+evaluate_prompt = Template("""Please answer the question based on the memory, related knowledge triplets and your knowledge. Return your response in JSON format with "sufficient", "reason", and "answer".
+Here are eight examples:
+Question: Find the person who said "Taste cannot be controlled by law", what did this person die from?
 Memory: {
     "1": "The triplet provides the information that Thomas Jefferson said this sentence.",
     "2": "No triplet provides this information."
 }
 Knowledge Triplets: Taste cannot be controlled by law., media_common.quotation.author, [Thomas Jefferson]
-Output:
-{
-    "A": {
-        "Sufficient": "No",
-        "Answer": "Null"
-    },
-    "R": "The person who said \"Taste cannot be controlled by law,\" is Thomas Jefferson. It is still uncertain to answer the entire question"
+Output: {
+    "sufficient": false,
+    "reason": "The person who said \\"Taste cannot be controlled by law,\\" is Thomas Jefferson. It is still uncertain to answer the entire question",
+    "answer": null
 }
 
-Q: The artist nominated for The Long Winter lived where?
+Question: The artist nominated for The Long Winter lived where?
 Memory: {
     "1": "The triplets provide the information that the author of The Long Winter is Laura Ingalls Wilder.",
     "2": "The triplets provide this information that Laura Ingalls Wilder lived in De Smet."
@@ -174,16 +175,13 @@ Memory: {
 Knowledge Triplets: The Long Winter, book.written_work.author, [Laura Ingalls Wilder]
 Laura Ingalls Wilder, people.person.places_lived, [Unknown-Entity]
 Unknown-Entity, people.place_lived.location, [De Smet]
-Output:
-{
-    "A": {
-        "Sufficient": "Yes",
-        "Answer": "De Smet"
-    },
-    "R": "The author of The Long Winter is Laura Ingalls Wilder, and Laura Ingalls Wilder lived in De Smet."
+Output: {
+    "sufficient": true,
+    "reason": "The author of The Long Winter is Laura Ingalls Wilder, and Laura Ingalls Wilder lived in De Smet.",
+    "answer": "De Smet"
 }
 
-Q: Who is the coach of the team owned by Steve Bisciotti?
+Question: Who is the coach of the team owned by Steve Bisciotti?
 Memory: {
     "1": "The triplets provide the information that Steve Bisciotti owns Baltimore Ravens.",
     "2": "No triplets provide the information."
@@ -191,16 +189,13 @@ Memory: {
 Knowledge Triplets: Steve Bisciotti, sports.professional_sports_team.owner_s, [Baltimore Ravens]
 Steve Bisciotti, sports.sports_team_owner.teams_owned, [Baltimore Ravens]
 Steve Bisciotti, organization.organization_founder.organizations_founded, [Allegis Group]
-Output:
-{
-    "A": {
-        "Sufficient": "No",
-        "Answer": "Null"
-    },
-    "R": "The team owned by Steve Bisciotti is Baltimore Ravens based on knowledge triplets. The coach of the team owned by Steve Bisciotti is not explicitly mentioned."
+Output: {
+    "sufficient": false,
+    "reason": "The team owned by Steve Bisciotti is Baltimore Ravens based on knowledge triplets. The coach of the team owned by Steve Bisciotti is not explicitly mentioned.",
+    "answer": null
 }
 
-Q: Rift Valley Province is located in a nation that uses which form of currency?
+Question: Rift Valley Province is located in a nation that uses which form of currency?
 Memory: {
     "1": "The triplets provide the information that Rift Valley Province is located in Kenya.",
     "2": "The triplets provide the information that Kenya uses the Kenyan shilling as its currency."
@@ -209,16 +204,13 @@ Knowledge Triplets: Rift Valley Province, location.administrative_division.count
 Rift Valley Province, location.location.geolocation, UnName_Entity
 Rift Valley Province, location.mailing_address.state_province_region, UnName_Entity
 Kenya, location.country.currency_used, Kenyan shilling
-Output:
-{
-    "A": {
-        "Sufficient": "Yes",
-        "Answer": "Kenyan shilling"
-    },
-    "R": "Based on knowledge triplets, Rift Valley Province is located in Kenya, which uses the Kenyan shilling as its currency."
+Output: {
+    "sufficient": true,
+    "reason": "Based on knowledge triplets, Rift Valley Province is located in Kenya, which uses the Kenyan shilling as its currency.",
+    "answer": "Kenyan shilling"
 }
 
-Q: The country with the National Anthem of Bolivia borders which nations?
+Question: The country with the National Anthem of Bolivia borders which nations?
 Memory: {
     "1": "The triplets provide the information that the National Anthem of Bolivia is the anthem of Bolivia.",
     "2": "No triplets provide the information."
@@ -228,108 +220,107 @@ National Anthem of Bolivia, music.composition.composer, Leopoldo Benedetto Vince
 National Anthem of Bolivia, music.composition.lyricist, José Ignacio de Sanjinés
 UnName_Entity, government.national_anthem_of_a_country.country, Bolivia
 Bolivia, location.country.national_anthem, UnName_Entity
-Output:
-{
-    "A": {
-        "Sufficient": "No",
-        "Answer": "Null"
-    },
-    "R": "Based on knowledge triplets, the National Anthem of Bolivia is the anthem of Bolivia. Therefore, the country with the National Anthem of Bolivia is Bolivia. However, the given knowledge triplets do not provide information about which nations border Bolivia."
+Output: {
+    "sufficient": false,
+    "reason": "Based on knowledge triplets, the National Anthem of Bolivia is the anthem of Bolivia. Therefore, the country with the National Anthem of Bolivia is Bolivia. However, the given knowledge triplets do not provide information about which nations border Bolivia.",
+    "answer": null
 }
 
-Q: Who served in the 21st Illinois Volunteer Infantry Regiment that also fought in the Battle of Vicksburg?
+Question: Who served in the 21st Illinois Volunteer Infantry Regiment that also fought in the Battle of Vicksburg?
 Memory: {
     "1": "The triplets show that the entity 'm.04h_h95' served in the 21st Illinois Volunteer Infantry Regiment.",
     "2": "The triplets show that 'm.04h_h95' is linked to Ulysses S. Grant.",
     "3": "The triplets show that Ulysses S. Grant participated in the Siege of Vicksburg."
 }
-Knowledge Triplets:21st Illinois Volunteer Infantry Regiment, military.military_unit.servicemembers, [m.04h_h95]
+Knowledge Triplets: 21st Illinois Volunteer Infantry Regiment, military.military_unit.servicemembers, [m.04h_h95]
 m.04h_h95, military.military_person.service, Ulysses S. Grant
 Ulysses S. Grant, military.military_person.participated_in_conflicts, Siege of Vicksburg
-Output:
-{
-    "A": {
-        "Sufficient": "Yes",
-        "Answer": "Ulysses S. Grant"
-    },
-    "R": "The entity 'm.04h_h95' is a servicemember of the 21st Illinois Volunteer Infantry Regiment and is linked to Ulysses S. Grant. Grant is explicitly recorded as participating in the Siege of Vicksburg, so he satisfies both conditions in the question."
+Output: {
+    "sufficient": true,
+    "reason": "The entity 'm.04h_h95' is a servicemember of the 21st Illinois Volunteer Infantry Regiment and is linked to Ulysses S. Grant. Grant is explicitly recorded as participating in the Siege of Vicksburg, so he satisfies both conditions in the question.",
+    "answer": "Ulysses S. Grant"
 }
 
-Q: Which film directed by Nora Ephron has a runtime of 126 minutes?
+Question: Which film directed by Nora Ephron has a runtime of 126 minutes?
 Memory: {
     "1": "The triplets show several films directed by Nora Ephron.",
     "2": "One film has runtime '126.0'."
 }
-Knowledge Triplets:FilmA, film.film.directed_by, Nora Ephron
+Knowledge Triplets: FilmA, film.film.directed_by, Nora Ephron
 FilmA, film.film.runtime, "126.0"
-Output:
-{
-    "A": { 
-        "Sufficient": "Yes", 
-        "Answer": "FilmA" 
-    },
-    "R": "Runtime 126.0 matches 126, so FilmA satisfies the condition."
+Output: {
+    "sufficient": true,
+    "reason": "Runtime 126.0 matches 126, so FilmA satisfies the condition.",
+    "answer": "FilmA"
 }
 
-Q: Which actor appeared in a film that won the Best Picture award?
+Question: Which actor appeared in a film that won the Best Picture award?
 Memory: {
     "1": "Triplets show ActorX appeared in FilmY.",
     "2": "Triplets show FilmY won Best Picture."
 }
-Knowledge Triplets:ActorX, film.actor.film, FilmY
+Knowledge Triplets: ActorX, film.actor.film, FilmY
 FilmY, award.award_winning_work.awards_won, Best Picture
-Output:
-{
-    "A": { 
-        "Sufficient": "Yes", 
-        "Answer": "ActorX" 
-    },
-    "R": "ActorX appeared in a film that won Best Picture."
+Output: {
+    "sufficient": true,
+    "reason": "ActorX appeared in a film that won Best Picture.",
+    "answer": "ActorX"
 }
 
-Now you need to directly output the results of the following question in JSON format (must include "A" and "R") without other information or notes. If the triplets explicitly contains the answer to the question, prioritize the fact of the triplet over memory.
-Q: """
+Now you need to directly output the results of the following question in JSON format with "sufficient", "reason", and "answer" without other information or notes. If the triplets explicitly contains the answer to the question, prioritize the fact of the triplet over memory.
+Question: $question
+Memory: $memory
+Knowledge Triplets:
+$knowledge_triplets
+Output:""")
 
-judge_reverse = """Based on the current set of entities to be retrieved and the known information including memory and triplets, is it necessary to add additional entities for answering question?
+
+judge_reflection_prompt = Template("""Based on the current set of entities to be retrieved and the known information including memory and triplets, is it necessary to add additional entities for answering question?
 Here are two examples:
-Q: Which of the countries in the Caribbean has the smallest country calling code?
+Question: Which of the countries in the Caribbean has the smallest country calling code?
 Entities set to be retrieved: ['Anguilla', 'Saint Lucia']
 Memory: Caribbean contains Antilles and Saint Lucia
 Knowledge Triplets: Caribbean, location.location.contains, ['Antilles', 'Saint Lucia']
-Output: 
-{
-    "Add": "Yes",
-    "Reason": "The entities set ignores other countries in Caribbean."
+Output: {
+    "add": true,
+    "reason": "The entities set ignores other countries in Caribbean."
 }
 
-Q: The artist nominated for The Long Winter lived where?
+Question: The artist nominated for The Long Winter lived where?
 Entities set to be retrieved: ['Laura Ingalls Wilder']
 Memory: "The author of The Long Winter is Laura Ingalls Wilder."
 Knowledge Triplets: The Long Winter, book.written_work.author, [Laura Ingalls Wilder]
-Output: 
-{
-    "Add": "No",
-    "Reason": "Now you need to search where Laura Ingalls Wilder lived."
+Output: {
+    "add": false,
+    "reason": "Now you need to search where Laura Ingalls Wilder lived."
 }
 
-Now you need to directly output the results of the following question in the JSON format (must include "Add" and "Reason") without other information or notes.
-Q: """
+Now you need to directly output the results of the following question in JSON format with "add" and "reason" without other information or notes.
+Question: $question
+Entities set to be retrieved: $entities
+Memory: $memory
+Knowledge Triplets: $knowledge_triplets
+Output:""")
 
 
-add_ent_prompt = """Please select the fewest necessary entities to be retrieved for answering the Q from Candidate Entities, based on the current known information (Memory), the reason for additional retrieval, and your own knowledge.
+backtrack_entity_prompt = Template("""Please select the fewest necessary entities to be retrieved for answering the Q from Candidate Entities, based on the current known information (Memory), the reason for additional retrieval, and your own knowledge.
 Here is an example:
-Q: Which of the countries in the Caribbean has the smallest country calling code?
+Question: Which of the countries in the Caribbean has the smallest country calling code?
 Reason: The entities set ignores other countries in the Caribbean.
-Candidate Entities: ['Saint Marie', 'Saint Martin (Island)', 'Viceroy Anguilla', 'Lesser Antilles', 'Barbados', 'British Virgin Islands', 'Leeward Islands', 'British West Indies', 'Caribbean', 'Saint Thomas', 'Bronte International University', 'Collectivity of Saint Martin', 'Southern Caribbean', 'University of Medicine and Health Sciences', 'Soufrière Hills', 'Lucayan Archipelago', 'University of the West Indies', 'Aureus University School of Medicine', 'North America', 'Netherlands Antilles', 'Puerto Rico', 'Chances Peak', 'Clarendon Parish', 'Saint Kitts and Nevis', 'Saint Lucia', 'Americas', 'Caribbean special municipalities of the Netherlands', 'Sandy Hill', 'School of Business and Computer Science, Trincity', 'School of Business and Computer Science, San Fernando', 'School of Business and Computer Science, Champs Fleurs', 'School of Business and Computer Science, Port of Spain', 'Bridgetown', 'St. Martinus University School of Medicine, main campus', 'Higher Institute of Medical Sciences. main campus', 'Grace University, main campus', 'Anguilla']
+Candidate Entities: [1] Saint Marie [2] Saint Martin (Island) [3] Viceroy Anguilla [4] Lesser Antilles [5] Barbados [6] British Virgin Islands [7] Leeward Islands [8] British West Indies [9] Caribbean [10] Saint Thomas [11] Bronte International University [12] Collectivity of Saint Martin [13] Southern Caribbean [14] University of Medicine and Health Sciences [15] Soufrière Hills [16] Lucayan Archipelago [17] University of the West Indies [18] Aureus University School of Medicine [19] North America [20] Netherlands Antilles [21] Puerto Rico [22] Chances Peak [23] Clarendon Parish [24] Saint Kitts and Nevis [25] Saint Lucia [26] Americas [27] Caribbean special municipalities of the Netherlands [28] Sandy Hill [29] School of Business and Computer Science, Trincity [30] School of Business and Computer Science, San Fernando [31] School of Business and Computer Science, Champs Fleurs [32] School of Business and Computer Science, Port of Spain [33] Bridgetown [34] St. Martinus University School of Medicine, main campus [35] Higher Institute of Medical Sciences. main campus [36] Grace University, main campus [37] Anguilla
 Memory: {
     "1": "The countries in the Caribbean are Antilles and Latin America.",
     "2": "The country calling codes for Antilles and Latin America are not mentioned.",
     "3": "It is not mentioned which country has the smallest country calling code."
 }
-Output: ['Barbados', 'Saint Lucia', 'Anguilla']
+Output: {"selected_ids": [5, 25, 37]}
 
-Now you need to directly output the results for the following Q in the list format without other information or notes.
-Q: """
+Now you need to directly output the numbers of selected candidate entities for the following question in JSON format using the "selected_ids" field without other information or notes.
+Question: $question
+Reason: $reason
+Candidate Entities: $entity_candidates
+Memory: $memory
+Output:""")
 
 
 cot_prompt = """Please answer the question according to your knowledge step by step. Here is an example:

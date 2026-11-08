@@ -49,42 +49,52 @@ def extract_predictions(value):
     return [text]
 
 
+
 # 输出评估结果
 def print_evaluation_table(num_right, num_error, total, call_num_list, time_list, token_num_list):
     def average(values):
         return f"{np.mean(values):,.2f}" if values else "N/A"
-    
     accuracy = f"{num_right / total:.2%}" if total else "N/A"
-    metric_width = 20
-    value_width = 10
-    border = ("=" * metric_width + "=" * value_width)
+
+    # 整理需要打印的指标
+    sections = [
+        ("Performance", [
+            ("Evaluated Samples", str(total)),
+            ("Accuracy", accuracy),
+            ("Correct", str(num_right)),
+            ("Incorrect", str(num_error)),
+        ]),
+        ("Computational Cost", [
+            ("Avg.LLM Calls", average(call_num_list)),
+            ("Avg.Input Tokens", average(token_num_list["input"])),
+            ("Avg.Output Tokens", average(token_num_list["output"])),
+            ("Avg.Total Tokens", average(token_num_list["total"])),
+            ("Avg.Time (s)", average(time_list)),
+        ]),
+    ]
+
+    # 根据最长的指标名称和数值动态计算宽度
+    all_rows = [row for _, rows in sections for row in rows]
+    metric_width = max(len(metric) for metric, _ in all_rows)
+    value_width = max(len(value) for _, value in all_rows)
+
+    # 表示指标与数值之间的 " | "
+    total_width = max(metric_width + 3 + value_width, max(len(title) for title, _ in sections))
+    border = "=" * (total_width + 2)
 
     def section(title):
-        print(f"{title:<{metric_width + value_width}}")
+        print(title)
         print(border)
 
     def row(metric, value):
-        print(f"{metric:<{metric_width}} | {str(value):<{len(str(value))}}")
+        print(f"{metric:<{metric_width}} | {value}")
 
     print(border)
-
-    # 性能
-    section("Performance")
-    row("Evaluated Samples", total)
-    row("Accuracy", accuracy)
-    row("Correct", num_right)
-    row("Incorrect", num_error)
-    print(border)
-
-    # 计算开销（每题平均）
-    section("Computational Cost")
-    row("Avg.LLM Calls", average(call_num_list))
-    row("Avg.Input Tokens", average(token_num_list["input"]))
-    row("Avg.Output Tokens", average(token_num_list["output"]))
-    row("Avg.Total Tokens", average(token_num_list["total"]))
-    row("Avg.Time (s)", average(time_list))
-
-    print(border)
+    for title, rows in sections:
+        section(title)
+        for metric, value in rows:
+            row(metric, value)
+        print(border)
 
 
 

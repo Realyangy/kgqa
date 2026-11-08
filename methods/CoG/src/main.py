@@ -279,11 +279,13 @@ def process_question(data, args, question_string, model, retriever):
                     else:
                         best_answer_so_far = answer
 
-                # 判断是否需要继续搜索，答案无效或者LLM觉得不充分时，继续探索，否则停止
-                if str(answer).lower() == 'null' or str(answer).lower() == 'none'  or str(answer).startswith('m.') or str(answer).startswith('[\"m.') or str(answer).startswith("['m.") or 'yes' not in str(sufficient).lower():
-                    stop = False
-                else:
-                    stop = True
+                # 充分性判断返回布尔值，保留原有无效答案过滤
+                stop = (
+                    sufficient
+                    and answer is not None
+                    and str(answer).strip().lower() not in {"", "null", "none", "[]"}
+                    and not str(answer).startswith(("m.", '["m.', "['m."))
+                )
 
                 # 证据充足时直接回答
                 if stop:
@@ -379,7 +381,8 @@ def process_question(data, args, question_string, model, retriever):
             try:
                 if isinstance(final_json_to_save, str):
                     parsed = json.loads(final_json_to_save)
-                    current_answer_text = parsed.get("A", {}).get("Answer", "").lower()
+                    final_answer = parsed.get("answer", parsed.get("A", {}).get("Answer", ""))
+                    current_answer_text = str(final_answer).lower()
                 else:
                     current_answer_text = str(final_json_to_save).lower()
             except:

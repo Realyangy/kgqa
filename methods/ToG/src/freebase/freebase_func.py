@@ -160,6 +160,11 @@ def relation_search_prune(entity_id, entity_name, pre_relations, pre_head, quest
     # 保证候选顺序稳定
     relation_candidates.sort(key=lambda item: (item["relation"], not item["head"]))
 
+    # 关系候选集为空时直接返回，不需要额外调用LLM
+    if not relation_candidates:
+        args._last_relation_search = {"all_candidates": []}
+        return []
+
     # 构造Prompt
     prompt = construct_relation_prune_prompt(question, entity_name, relation_candidates, args)
     result = run_llm(prompt, args.temperature_exploration, args.max_length, args.base_url, args.api_key, args.LLM_type)

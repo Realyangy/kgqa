@@ -4,7 +4,7 @@ from utils import *
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
-    parser.add_argument("--output_file", type=str, default="/home/flyvideo/Sata2/lyy/kgqa/methods/CoG/output/CoG_data_cwq_sampleNum_500_sampleSeed_42_modelName_qwen3.5-27b-awq-4bit.jsonl", help="ToG result file, relative to eval/eval-tog.")
+    parser.add_argument("--output_file", type=str, default="/home/flyvideo/Sata2/lyy/kgqa/methods/ToG/output/ToG_data_cwq_sampleNum_500_sampleSeed_42_modelName_deepseekv4.1-flash.jsonl", help="ToG result file")
     parser.add_argument("--constraints_refuse", type=bool, default=True, help="LLM may have refuse erorr, enable this option to skip current sample.")
     args = parser.parse_args()
 

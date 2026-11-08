@@ -1,13 +1,57 @@
 import re
 import argparse
 import numpy as np
-
 from utils import *
+
+# 兼容ToG的答案字符串和PoG/CoG的JSON答案
+def extract_predictions(value):
+    if value is None:
+        return []
+
+    if isinstance(value, dict):
+        if "A" in value:
+            return extract_predictions(value["A"])
+        for key in ("Answer", "answer"):
+            if key in value:
+                return extract_predictions(value[key])
+        return []
+
+    if isinstance(value, list):
+        return [answer for item in value for answer in extract_predictions(item)]
+
+    if not isinstance(value, str):
+        return [str(value)]
+
+    text = value.strip()
+    if not text or text.lower() in {"none", "null", "error"}:
+        return []
+
+    # 尝试解析PoG/CoG的JSON答案
+    start = text.find("{")
+    if start >= 0:
+        try:
+            return extract_predictions(json.loads(text[start:]))
+        except json.JSONDecodeError:
+            # 兼容旧模型输出的不完整JSON
+            matches = re.findall(r'"Answer"\s*:\s*"([^"]+)"', text[start:])
+            if matches:
+                return [matches[-1]]
+
+            match = re.search(r'"Answer"\s*:\s*(\[[^\]]*\])', text[start:])
+            if match:
+                try:
+                    return extract_predictions(json.loads(match.group(1)))
+                except json.JSONDecodeError:
+                    pass
+
+    # ToG直接保存答案字符串
+    return [text]
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
-    parser.add_argument("--output_file", type=str, default="/home/flyvideo/Sata2/lyy/kgqa/methods/CoG/output/CoG_data_cwq_sampleNum_500_sampleSeed_42_modelName_gpt-4o-mini.jsonl", help="Result file.")
+    parser.add_argument("--output_file", type=str, default="/home/flyvideo/Sata2/lyy/kgqa/methods/ToG/output/ToG_data_cwq_sampleNum_500_sampleSeed_42_modelName_deepseekv4.1-flash.jsonl", help="Result file.")
     args = parser.parse_args()
 
     ground_truth_datas, question_string, output_datas = prepare_dataset_for_eval(args.dataset, args.output_file)
@@ -82,84 +126,32 @@ if __name__ == '__main__':
             if ori_data[type_field] not in count_q.keys():
                 count_q[ori_data[type_field]] = 0
             count_q[ori_data[type_field]] += 1
-        start_i = data['results'].find('{')
-        if start_i != -1:
-            try:
-                results = json.loads(data['results'][start_i:])
-                if 'A' in results.keys():
-                    response = results['A']['Answer']
-                else:
-                    response = results['Answer']
-                
-                if exact_match(str(response), answers):
-                    num_right+=1
-                    if type_field:
-                        if ori_data[type_field] not in right_q.keys():
-                            right_q[ori_data[type_field]] = 0
-                        right_q[ori_data[type_field]] += 1
-                else:
-                    num_error+=1
-                    error_question.append(data[question_string])
-            except:
-                pattern = r'"Answer":\s*["\']([^"\']+)["\']'
-                match_ = list(re.finditer(pattern, data['results'][start_i:]))
-                if match_:
-                    response = match_[-1].group(1)
-                    if exact_match(response, answers):
-                        num_right+=1
-                        if type_field:
-                            if ori_data[type_field] not in right_q.keys():
-                                right_q[ori_data[type_field]] = 0
-                            right_q[ori_data[type_field]] += 1
-                    else:
-                        num_error+=1
-                        error_question.append(data[question_string])
-                else:
-                    pattern = r'"Answer":\s*(\[[^\]]+\])'
-                    match_ = re.search(pattern, data['results'][start_i:])
-                    if match_:
-                        list_string = match_.group(1)
-                        list_obj = json.loads(list_string)
-                        flag = 0
-                        for response in list_obj:
-                            if exact_match(str(response), answers):
-                                if type_field:
-                                    if ori_data[type_field] not in right_q.keys():
-                                        right_q[ori_data[type_field]] = 0
-                                    right_q[ori_data[type_field]] += 1
-                                num_right+=1
-                                flag = 1
-                                break
-                        if not flag:
-                            num_error+=1
-                            error_question.append(data[question_string])
-                            
-                    else:
-                        if exact_match(str(response), answers):
-                            if type_field:
-                                if ori_data[type_field] not in right_q.keys():
-                                    right_q[ori_data[type_field]] = 0
-                                right_q[ori_data[type_field]] += 1
-                            num_right+=1
-                        else:
-                            num_error+=1
-                            error_question.append(data[question_string])
+
+        # 提取不同算法的预测答案
+        predictions = extract_predictions(data.get("results"))
+
+        # 与答案及别名集合进行匹配
+        is_correct = any(exact_match(str(prediction), answers) for prediction in predictions)
+
+        if is_correct:
+            num_right += 1
+
+            if type_field:
+                question_type = ori_data[type_field]
+                right_q[question_type] = (right_q.get(question_type, 0) + 1)
         else:
-            response = data['results']
-            if exact_match(response, answers):
-                if type_field:
-                    if ori_data[type_field] not in right_q.keys():
-                        right_q[ori_data[type_field]] = 0
-                    right_q[ori_data[type_field]] += 1
-                num_right+=1
-            else:
-            
-                num_error+=1
+            num_error += 1
+            error_question.append(data[question_string])
 
     print("Exact Match: {:.4f}".format(num_right / len(output_datas)))
     print("Right: {}, Error: {}".format(num_right, num_error))
-    print('Average call num:', np.mean(np.array(call_num_list)))
-    print('Average time:', np.mean(np.array(time_list)))
-    for t_type, nu_l in token_num_list.items():
-        print('Average {} token:'.format(t_type), np.mean(np.array(nu_l)))
+    print("Evaluated samples:", len(output_datas))
+    if call_num_list:
+        print("Average call num:", np.mean(call_num_list))
+        print("Average time:", np.mean(time_list))
+
+        for t_type, values in token_num_list.items():
+            print(f"Average {t_type} token:", np.mean(values))
+    else:
+        print("Call/time/token statistics: N/A")
 

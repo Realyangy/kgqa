@@ -41,9 +41,18 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-
                 max_tokens=max_tokens,
                 frequency_penalty=0,
                 presence_penalty=0,
+                response_format={"type": "json_object"},
                 extra_body=extra_body
             )
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+
+            # 检查输出是否为空或者被截断
+            if not content or not content.strip():
+                raise ValueError("LLM returned empty JSON")
+            if response.choices[0].finish_reason == "length":
+                raise ValueError("LLM JSON output was truncated")
+            return content
+        
         except Exception as e:
             logger.info("OpenAI error, retry: %s", e)
             time.sleep(2)
@@ -242,7 +251,7 @@ def generate_without_explored_paths(question, args):
     logger.info("LLM Response [Direct Answer]:\n%s", response)
     result = parse_answer_json(response)
     answer = result["answer"]
-    return answer.strip() if answer is not None else ""
+    return answer.strip() if answer is not None else None
 
 
 # 如果当前关系下未检索到实体，则关系下会记录[FINISH_ID]（具体可见freebase_func.update_history），所有分支都结束时，终止搜索

@@ -271,7 +271,7 @@ def generate_answer(question, cluster_chain_of_entities, args):
     result = parse_answer_json(response)
     answer = result["answer"]
 
-    return answer.strip() if answer is not None else ""
+    return answer.strip() if answer is not None else None
 
 
 # 实体剪枝，这里不需要调用LLM，直接根据整理好的内容排序后剪枝即可

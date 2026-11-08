@@ -195,26 +195,54 @@ def save_2_jsonl(question, answer, cluster_chain_of_entities, output_file):
         outfile.write(json.dumps(result, ensure_ascii=False) + "\n")
 
 
-# 提取LLM回答的答案
-def extract_answer(text):
-    match = re.search(r"Final Answer:\s*\{([^{}]+)\}\.?", text)
-    if match:
-        return match.group(1).strip()
-    return ""
-    
+# 解析回答类任务的JSON输出
+def parse_answer_json(response, require_sufficient=False):
+    if not isinstance(response, str):
+        raise ValueError("LLM response is not a string")
 
-# 提取LLM在reasoning中的判断结果，yes表示三元组足以回答问题
-def if_true(prompt):
-    return bool(re.match(r"^(?:A:\s*)?\{Yes\}", prompt.strip(), re.IGNORECASE))
+    text = response.strip()
+
+    # 兼容Markdown代码块
+    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+
+    # 解析JSON
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError("Invalid answer JSON") from error
+
+    if not isinstance(data, dict):
+        raise ValueError("JSON response must be an object")
+
+    # 验证reason
+    if not isinstance(data.get("reason"), str):
+        raise ValueError("reason must be a string")
+
+    # 验证answer
+    if "answer" not in data:
+        raise ValueError("Missing answer field")
+
+    if data["answer"] is not None and not isinstance(data["answer"], str):
+        raise ValueError("answer must be a string or null")
+
+    # 充分性判断任务额外验证sufficient
+    if require_sufficient:
+        if type(data.get("sufficient")) is not bool:
+            raise ValueError("sufficient must be a boolean")
+
+    return data
 
 
 # 未检索到相关信息时，直接调用LLM回答问题
 def generate_without_explored_paths(question, args):
-    prompt = cot_prompt.substitute(question=question)
+    prompt = answer_directly_prompt.substitute(question=question)
     response = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
     logger.info("LLM Response [Direct Answer]:\n%s", response)
-    result = extract_answer(response)
-    return result if result else response
+    result = parse_answer_json(response)
+    answer = result["answer"]
+    return answer.strip() if answer is not None else ""
 
 
 # 如果当前关系下未检索到实体，则关系下会记录[FINISH_ID]（具体可见freebase_func.update_history），所有分支都结束时，终止搜索
@@ -256,6 +284,7 @@ def prepare_dataset(dataset_name):
 
 #     with open(output_file, "a", encoding="utf-8") as f:
 #         f.write(json.dumps(error_result, ensure_ascii=False) + "\n")
+
 
 def save_error_result(output_file, question, reasoning_chains=None):
     error_result = {

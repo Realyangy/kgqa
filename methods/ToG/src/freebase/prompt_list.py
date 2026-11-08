@@ -34,9 +34,8 @@ Output:""")
 answer_prompt = Template("""Given a question and the associated retrieved knowledge graph triplets (entity, relation, entity), you are asked to answer the question with these triplets and your knowledge. Return your response in JSON format with "reason" and "answer".
 Q: Find the person who said "Taste cannot be controlled by law", what did this person die from?
 Knowledge Triplets: Taste cannot be controlled by law., media_common.quotation.author, Thomas Jefferson
-A: Based on the given knowledge triplets, it's not sufficient to answer the entire question. The triplets only provide information about the person who said "Taste cannot be controlled by law" which is Thomas Jefferson. To answer the second part of the question, it's necessary to have additional knowledge about where Thomas Jefferson's dead.
 A: {
-  "reason": "Based on the given knowledge triplets, it's not sufficient to answer the entire question. The triplets only provide information about the person who said "Taste cannot be controlled by law" which is Thomas Jefferson. To answer the second part of the question, it's necessary to have additional knowledge about where Thomas Jefferson's dead.",
+  "reason": "Based on the given knowledge triplets, it's not sufficient to answer the entire question. The triplets only provide information about the person who said \\"Taste cannot be controlled by law\\" which is Thomas Jefferson. To answer the second part of the question, it's necessary to have additional knowledge about where Thomas Jefferson's dead.",
   "answer": null
 }
 
@@ -90,7 +89,7 @@ Q: Find the person who said "Taste cannot be controlled by law", what did this p
 Knowledge Triplets: Taste cannot be controlled by law., media_common.quotation.author, Thomas Jefferson
 A: {
   "sufficient": false,
-  "reason": "Based on the given knowledge triplets, it's not sufficient to answer the entire question. The triplets only provide information about the person who said "Taste cannot be controlled by law" which is Thomas Jefferson. To answer the second part of the question, it's necessary to have additional knowledge about where Thomas Jefferson's dead.",
+  "reason": "Based on the given knowledge triplets, it's not sufficient to answer the entire question. The triplets only provide information about the person who said \\"Taste cannot be controlled by law\\" which is Thomas Jefferson. To answer the second part of the question, it's necessary to have additional knowledge about where Thomas Jefferson's dead.",
   "answer": null
 }
 

@@ -266,10 +266,12 @@ def generate_answer(question, cluster_chain_of_entities, args):
 
     # 记录LLM原始回答
     logger.info("LLM Response [Generate Answer]:\n%s", response)
-    # 提取答案
-    result = extract_answer(response)
-    
-    return result if result else response
+
+    # 解析JSON
+    result = parse_answer_json(response)
+    answer = result["answer"]
+
+    return answer.strip() if answer is not None else ""
 
 
 # 实体剪枝，这里不需要调用LLM，直接根据整理好的内容排序后剪枝即可
@@ -320,13 +322,16 @@ def reasoning(question, cluster_chain_of_entities, args):
         for source, relation, target in chain
     )
 
-    prompt = prompt_evaluate.substitute(question=question, knowledge_triplets=chain_prompt,)
+    # 构造Prompt
+    prompt = evaluate_prompt.substitute(question=question, knowledge_triplets=chain_prompt)
+
     response = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
     logger.info("LLM Response [Reasoning]:\n%s", response)
-    
-    if if_true(response):
-        answer = extract_answer(response)
-        if answer:
-            return True, answer
+    result = parse_answer_json(response, require_sufficient=True)
+    sufficient, answer= result["sufficient"], result["answer"]
+
+    # 证据充分且能够提取有效答案时停止
+    if sufficient and answer is not None and answer.strip():
+        return True, answer.strip()
+
     return False, ""
-    

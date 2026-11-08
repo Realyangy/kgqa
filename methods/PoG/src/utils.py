@@ -216,11 +216,41 @@ def extract_add_and_reason(response):
     return add, reason
 
 
-def generate_without_explored_paths(question, subquestions, args):
-    prompt = cot_prompt + question 
+# 解析LLM直接回答的JSON结果
+def extract_direct_answer(response):
+    data = parse_json_object(response)
+    known = data.get("known")
+    reason = data.get("reason")
 
+    if type(known) is not bool:
+        raise ValueError("known must be a boolean")
+
+    if not isinstance(reason, str):
+        raise ValueError("reason must be a string")
+
+    if "answer" not in data:
+        raise ValueError("Missing answer field")
+
+    answer = data["answer"]
+    if not (
+        answer is None
+        or isinstance(answer, str)
+        or (isinstance(answer, list) and all(isinstance(item, str) for item in answer))
+    ):
+        raise ValueError("answer must be a string, list of strings, or null")
+
+    logger.info("Known: %s", known)
+    logger.info("Answer: %s", answer)
+    logger.info("Reason: %s", reason)
+    return answer
+
+
+# 没有KG检索路径时直接回答
+def generate_without_explored_paths(question, subquestions, args):
+    prompt = answer_directly_prompt.substitute(question=question)
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    return response, token_num
+    answer = extract_direct_answer(response)
+    return answer, token_num
 
 
 def break_question(question, args):

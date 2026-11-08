@@ -144,79 +144,6 @@ $knowledge_triplets
 Output:""")
 
 
-
-answer_prompt = """Given a question and the associated retrieved knowledge graph triplets (entity, relation, entity), you are asked to answer the question with these triplets and your knowledge.
-Here are five examples:
-Q: Find the person who said \"Taste cannot be controlled by law\", what did this person die from?
-Knowledge Triplets: Taste cannot be controlled by law., media_common.quotation.author, Thomas Jefferson
-The output is:
-{
-    "A": {
-        "Sufficient": "No",
-        "Answer": "Null"
-    },
-    "R": "Based on the given knowledge triplets, it's not sufficient to answer the entire question. The triplets only provide information about the person who said 'Taste cannot be controlled by law', which is Thomas Jefferson. To answer the second part of the question, it's necessary to have additional knowledge about where Thomas Jefferson's dead."
-}
-
-Q: The artist nominated for The Long Winter lived where?
-Knowledge Triplets: The Long Winter, book.written_work.author, Laura Ingalls Wilder
-Laura Ingalls Wilder, people.person.places_lived, Unknown-Entity
-Unknown-Entity, people.place_lived.location, De Smet
-The output is:
-{
-    "A": {
-        "Sufficient": "Yes",
-        "Answer": "De Smet"
-    },
-    "R": "Based on the given knowledge triplets, the author of The Long Winter, Laura Ingalls Wilder, lived in De Smet."
-}
-
-Q: Who is the coach of the team owned by Steve Bisciotti?
-Knowledge Triplets: Steve Bisciotti, sports.professional_sports_team.owner_s, Baltimore Ravens
-Steve Bisciotti, sports.sports_team_owner.teams_owned, Baltimore Ravens
-Steve Bisciotti, organization.organization_founder.organizations_founded, Allegis Group
-The output is:
-{
-    "A": {
-        "Sufficient": "No",
-        "Answer": "Null"
-    },
-    "R": "Based on the given knowledge triplets, the coach of the team owned by Steve Bisciotti is not explicitly mentioned. However, it can be inferred that the team owned by Steve Bisciotti is the Baltimore Ravens, a professional sports team. Therefore, additional knowledge about the current coach of the Baltimore Ravens can be used to answer the question."
-}
-
-Q: Rift Valley Province is located in a nation that uses which form of currency?
-Knowledge Triplets: Rift Valley Province, location.administrative_division.country, Kenya
-Rift Valley Province, location.location.geolocation, UnName_Entity
-Rift Valley Province, location.mailing_address.state_province_region, UnName_Entity
-Kenya, location.country.currency_used, Kenyan shilling
-The output is:
-{
-    "A": {
-        "Sufficient": "Yes",
-        "Answer": "Kenyan shilling"
-    },
-    "R": "Based on the given knowledge triplets, Rift Valley Province is located in Kenya, which uses the Kenyan shilling as its currency."
-}
-
-Q: The country with the National Anthem of Bolivia borders which nations?
-Knowledge Triplets: National Anthem of Bolivia, government.national_anthem_of_a_country.anthem, UnName_Entity
-National Anthem of Bolivia, music.composition.composer, Leopoldo Benedetto Vincenti
-National Anthem of Bolivia, music.composition.lyricist, José Ignacio de Sanjinés
-UnName_Entity, government.national_anthem_of_a_country.country, Bolivia
-Bolivia, location.country.national_anthem, UnName_Entity
-The output is:
-{
-    "A": {
-        "Sufficient": "No",
-        "Answer": "Null"
-    },
-    "R": "Based on the given knowledge triplets, we can infer that the National Anthem of Bolivia is the anthem of Bolivia. Therefore, the country with the National Anthem of Bolivia is Bolivia itself. However, the given knowledge triplets do not provide information about which nations border Bolivia. To answer this question, we need additional knowledge about the geography of Bolivia and its neighboring countries."
-}
-
-Now you need to directly output the results of the following question in JSON format (must include "A" and "R") without other information or notes.
-Q: """
-
-
 judge_reflection_prompt = Template("""Based on the current set of entities to be retrieved and the known information including memory and triplets, is it necessary to add additional entities for answering question?
 Here are two examples:
 Question: Which of the countries in the Caribbean has the smallest country calling code?
@@ -265,17 +192,75 @@ Memory: $memory
 Output:""")
 
 
-
-cot_prompt = """Please answer the question according to your knowledge step by step. Here is an example:
-Q: What state is home to the university that is represented in sports by George Washington Colonials men's basketball?
-The output is:
-{
-    "A": {
-        "Known": "Yes",
-        "Answer": "Washington, D.C."
-    },
-    "R": "First, the education institution has a sports team named George Washington Colonials men's basketball in is George Washington University , Second, George Washington University is in Washington D.C."
+answer_prompt = Template("""Given a question and the associated retrieved knowledge graph triplets (entity, relation, entity), you are asked to answer the question with these triplets and your knowledge.
+Here are five examples:
+Question: Find the person who said "Taste cannot be controlled by law", what did this person die from?
+Knowledge Triplets: Taste cannot be controlled by law., media_common.quotation.author, Thomas Jefferson
+Output: {
+    "sufficient": false,
+    "reason": "Based on the given knowledge triplets, it's not sufficient to answer the entire question. The triplets only provide information about the person who said 'Taste cannot be controlled by law', which is Thomas Jefferson. To answer the second part of the question, it's necessary to have additional knowledge about where Thomas Jefferson's dead.",
+    "answer": null
 }
 
-Please directly output the answer in JSON format (must include "A" and "R") without other information or notes.
-"""
+Question: The artist nominated for The Long Winter lived where?
+Knowledge Triplets: The Long Winter, book.written_work.author, Laura Ingalls Wilder
+Laura Ingalls Wilder, people.person.places_lived, Unknown-Entity
+Unknown-Entity, people.place_lived.location, De Smet
+Output: {
+    "sufficient": true,
+    "reason": "Based on the given knowledge triplets, the author of The Long Winter, Laura Ingalls Wilder, lived in De Smet.",
+    "answer": "De Smet"
+}
+
+Question: Who is the coach of the team owned by Steve Bisciotti?
+Knowledge Triplets: Steve Bisciotti, sports.professional_sports_team.owner_s, Baltimore Ravens
+Steve Bisciotti, sports.sports_team_owner.teams_owned, Baltimore Ravens
+Steve Bisciotti, organization.organization_founder.organizations_founded, Allegis Group
+Output: {
+    "sufficient": false,
+    "reason": "Based on the given knowledge triplets, the coach of the team owned by Steve Bisciotti is not explicitly mentioned. However, it can be inferred that the team owned by Steve Bisciotti is the Baltimore Ravens, a professional sports team. Therefore, additional knowledge about the current coach of the Baltimore Ravens can be used to answer the question.",
+    "answer": null
+}
+
+Question: Rift Valley Province is located in a nation that uses which form of currency?
+Knowledge Triplets: Rift Valley Province, location.administrative_division.country, Kenya
+Rift Valley Province, location.location.geolocation, UnName_Entity
+Rift Valley Province, location.mailing_address.state_province_region, UnName_Entity
+Kenya, location.country.currency_used, Kenyan shilling
+Output: {
+    "sufficient": true,
+    "reason": "Based on the given knowledge triplets, Rift Valley Province is located in Kenya, which uses the Kenyan shilling as its currency.",
+    "answer": "Kenyan shilling"
+}
+
+Question: The country with the National Anthem of Bolivia borders which nations?
+Knowledge Triplets: National Anthem of Bolivia, government.national_anthem_of_a_country.anthem, UnName_Entity
+National Anthem of Bolivia, music.composition.composer, Leopoldo Benedetto Vincenti
+National Anthem of Bolivia, music.composition.lyricist, José Ignacio de Sanjinés
+UnName_Entity, government.national_anthem_of_a_country.country, Bolivia
+Bolivia, location.country.national_anthem, UnName_Entity
+Output: {
+    "sufficient": false,
+    "reason": "Based on the given knowledge triplets, we can infer that the National Anthem of Bolivia is the anthem of Bolivia. Therefore, the country with the National Anthem of Bolivia is Bolivia itself. However, the given knowledge triplets do not provide information about which nations border Bolivia. To answer this question, we need additional knowledge about the geography of Bolivia and its neighboring countries.",
+    "answer": null
+}
+
+Now you need to directly output the results of the following question in JSON format with "sufficient", "reason", and "answer" without other information or notes.
+Question: $question
+Knowledge Triplets: $knowledge_triplets
+Output: """)
+
+
+answer_directly_prompt = Template("""Please answer the question according to your knowledge step by step.
+Here is an example:
+Question: What state is home to the university that is represented in sports by George Washington Colonials men's basketball?
+Output: {
+    "known": true,
+    "reason": "First, the education institution has a sports team named George Washington Colonials men's basketball in is George Washington University , Second, George Washington University is in Washington D.C.",
+    "answer": "Washington, D.C."
+}
+
+Please directly output the answer in JSON format with "known", "reason", and "answer" without other information or notes.
+Question: $question
+Output: """)
+

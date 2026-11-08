@@ -191,6 +191,11 @@ if __name__ == '__main__':
                     if entity_id != "[FINISH_ID]":
                         call_num += 1
                         retrieve_relations, token_num = relation_search_prune(entity_id, sub_questions, entity_info['entity_name'], entity_info['pre_relations'], entity_info['pre_head'], question, args)
+
+                        # 空关系时不调用LLM
+                        if token_num["total"] > 0:
+                            call_num += 1
+
                         for token_type in token_num.keys():
                             all_tokens[token_type] += token_num[token_type]
                         current_entity_relations_list.extend(retrieve_relations)
@@ -299,7 +304,7 @@ if __name__ == '__main__':
 
                     # LLM判断证据充分后，保存答案并停止搜索
                     if stop:
-                        save_2_jsonl(question, question_string, results, cluster_chain_of_entities, call_num, all_tokens, start_time, output_file=args.output_file)
+                        save_2_jsonl(question, question_string, answer, cluster_chain_of_entities, call_num, all_tokens, start_time, output_file=args.output_file)
                         flag_printed = True
                         break
                     # 证据不足时进行反思，判断继续搜索还是换方向搜索

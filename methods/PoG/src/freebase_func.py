@@ -366,12 +366,15 @@ def half_stop(question, question_string, subquestions, cluster_chain_of_entities
     save_2_jsonl(question, question_string, answer, cluster_chain_of_entities, call_num, all_t, start_time, output_file=args.output_file)
 
 
-def generate_answer(question, subquestions, cluster_chain_of_entities, args): 
-    prompt = answer_prompt + question 
-    chain_prompt = '\n'.join([', '.join([str(x) for x in chain]) for sublist in cluster_chain_of_entities for chain in sublist])
-    prompt += "\nKnowledge Triplets: " + chain_prompt
-    result, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    return result, token_num
+# 根据检索到的KG证据生成最终答案
+def generate_answer(question, subquestions, cluster_chain_of_entities, args):
+    # 构造检索到的KG路径
+    chain_prompt = '\n'.join(', '.join(str(x) for x in chain) for sublist in cluster_chain_of_entities for chain in sublist)
+    prompt = answer_prompt.substitute(question=question, knowledge_triplets=chain_prompt)
+    response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
+    answer, reason, sufficient = extract_reason_and_anwer(response)
+    return answer, token_num
+
 
 
 def if_topic_non_retrieve(string):

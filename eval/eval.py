@@ -101,7 +101,7 @@ def print_evaluation_table(num_right, num_error, total, call_num_list, time_list
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
-    parser.add_argument("--output_file", type=str, default="/home/flyvideo/Sata2/lyy/kgqa/methods/ToG/output/ToG_data_cwq_sampleNum_500_sampleSeed_42_modelName_qwen3.5-27b-awq-4bit.jsonl", help="Result file.")
+    parser.add_argument("--output_file", type=str, default="/home/flyvideo/Sata2/lyy/kgqa/methods/PoG/output/PoG_data_cwq_sampleNum_500_sampleSeed_42_modelName_qwen3.5-27b-awq-4bit.jsonl", help="Result file.")
     args = parser.parse_args()
 
     ground_truth_datas, question_string, output_datas = prepare_dataset_for_eval(args.dataset, args.output_file)

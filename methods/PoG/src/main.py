@@ -68,14 +68,14 @@ def disable_net_proxy():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", type=str, default="DeepSeekV4.1-Flash", choices=MODELS_DICT.keys(), help="Model configuration name defined in MODEL_DICT.")
+    parser.add_argument("--model_name", type=str, default="Qwen3.5-27b-AWQ-4bit", choices=MODELS_DICT.keys(), help="Model configuration name defined in MODEL_DICT.")
     parser.add_argument("--max_length", type=int, default=4096, help="the max length of LLMs output.")
     parser.add_argument("--temperature_exploration", type=float, default=0.3, help="the temperature in exploration stage.")
     parser.add_argument("--temperature_reasoning", type=float, default=0.3, help="the temperature in reasoning stage.")
     parser.add_argument("--embedding_model", type=str, default="/home/flyvideo/Sata2/Models/Embedding-Model/msmarco-distilbert-base-tas-b")
     parser.add_argument("--output_dir", type=str, default="/home/flyvideo/Sata2/lyy/kgqa/methods/PoG/output", help="Root directory for logs, results, and memory files, relative to methods/PoG/src.")
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
-    parser.add_argument("--dataset_sample_num",type=int, default=100, help="Number of dataset samples to evaluate. Use None for all samples.")
+    parser.add_argument("--dataset_sample_num",type=int, default=500, help="Number of dataset samples to evaluate. Use None for all samples.")
     parser.add_argument("--dataset_sample_seed", type=int, default=42, help="Random seed used only for selecting the evaluation subset.")
     parser.add_argument("--depth", type=int, default=4, help="choose the search depth of PoG.")
     parser.add_argument("--remove_unnecessary_rel", type=bool, default=True, help="whether removing unnecessary relations.")
@@ -189,7 +189,6 @@ if __name__ == '__main__':
                 for entity_info in topic_entities:
                     entity_id = entity_info['entity_id']
                     if entity_id != "[FINISH_ID]":
-                        call_num += 1
                         retrieve_relations, token_num = relation_search_prune(entity_id, sub_questions, entity_info['entity_name'], entity_info['pre_relations'], entity_info['pre_head'], question, args)
 
                         # 空关系时不调用LLM

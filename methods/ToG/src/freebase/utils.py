@@ -1,5 +1,4 @@
 import re
-import ast
 import os
 import json
 import time
@@ -18,7 +17,7 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-
     messages = [
         {
             "role": "system",
-            "content": "You are an AI assistant that helps people find information."
+            "content": "You are an AI assistant that helps people find information. Always respond in valid JSON format."
         },
         {
             "role": "user",

@@ -97,79 +97,101 @@ def save_2_jsonl(question, question_string, answer, cluster_chain_of_entities, c
         outfile.write(json_str + "\n")
 
 
-def extract_add_ent(string):
-    first_brace_p = string.find('[')
-    last_brace_p = string.rfind(']')
-    string = string[first_brace_p:last_brace_p+1]
-    try:
-        new_string = eval(string)
-    except:
-        s_list = string.split('\', \'')
-        if len(s_list) == 1:
-            new_string = [s_list[0].strip('[\'').strip('\']')]
-        else:
-            new_string = [s.strip('[\'').strip('\']') for s in s_list]
-    return new_string
+# 解析LLM输出的JSON对象
+def parse_json_object(response):
+    if not isinstance(response, str):
+        raise ValueError("LLM response is not a string")
 
-def extract_memory(string):
-    first_brace_p = string.find('{')
-    last_brace_p = string.rfind('}')
-    string = string[first_brace_p:last_brace_p+1]
-    return string
+    text = response.strip()
 
-def extract_reason_and_anwer(string):
+    # 兼容Markdown代码块
+    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        text = match.group(1).strip()
 
     try:
-        first_brace_p = string.find('{')
-        last_brace_p = string.rfind('}')
-        if first_brace_p != -1 and last_brace_p != -1:
-            string = string[first_brace_p:last_brace_p+1]
-            
-        answer = re.search(r'"Answer":\s*"(.*?)"', string)
-        if answer:
-            answer = answer.group(1)
-        else:
+        data = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError("Invalid JSON response") from error
 
-            match = re.search(r'"Answer":\s*(\[[^\]]+\])', string)
-            if match:
-                answer = match.group(1)
-            else:
-                answer = "Null"
+    if not isinstance(data, dict):
+        raise ValueError("JSON response must be an object")
 
-        reason_match = re.search(r'"R":\s*"(.*?)"', string)
-        reason = reason_match.group(1) if reason_match else "No reason found"
-        
-        sufficient_match = re.search(r'"Sufficient":\s*"(.*?)"', string)
-        sufficient = sufficient_match.group(1) if sufficient_match else "No"
-        
-        # print("Answer:", answer)
-        # print("Reason:", reason)
-        # print("Sufficient:", sufficient)
-        return answer, reason, sufficient
-    except Exception as e:
-        logger.info("Error parsing answer: %s", e)
-        return "Null", "Parse Error", "No"
+    return data
 
-def extract_add_and_reason(string):
-    try:
-        first_brace_p = string.find('{')
-        last_brace_p = string.rfind('}')
-        string = string[first_brace_p:last_brace_p+1]
-        
-        flag_match = re.search(r'"Add":\s*"(.*?)"', string)
-        flag = flag_match.group(1) if flag_match else "No"
-        
-        reason_match = re.search(r'"Reason":\s*"(.*?)"', string)
-        reason = reason_match.group(1) if reason_match else ""
 
-        logger.info("Add: %s", flag)
-        logger.info("Reason: %s", reason)
-        if 'yes' in flag.lower():
-            return True, reason
-        else:
-            return False, reason
-    except:
-        return False, ""
+# 解析LLM选择的候选编号
+def parse_selected_ids(response, candidate_count):
+    data = parse_json_object(response)
+    selected_ids = data.get("selected_ids")
+    if not isinstance(selected_ids, list):
+        raise ValueError("selected_ids must be a list")
+
+    selected_set = set()
+    for candidate_id in selected_ids:
+        if type(candidate_id) is not int:
+            raise ValueError(f"Invalid candidate ID: {candidate_id}")
+        if not 1 <= candidate_id <= candidate_count:
+            raise ValueError(f"Candidate ID out of range: {candidate_id}")
+        if candidate_id in selected_set:
+            raise ValueError(f"Duplicate candidate ID: {candidate_id}")
+        selected_set.add(candidate_id)
+
+    return selected_ids
+
+
+# 解析充分性判断结果
+def extract_reason_and_anwer(response):
+    data = parse_json_object(response)
+
+    # 验证充分性判断
+    sufficient = data.get("sufficient")
+    if type(sufficient) is not bool:
+        raise ValueError("sufficient must be a boolean")
+
+    # 验证原因
+    reason = data.get("reason")
+    if not isinstance(reason, str):
+        raise ValueError("reason must be a string")
+
+    # 验证答案
+    if "answer" not in data:
+        raise ValueError("Missing answer field")
+
+    answer = data["answer"]
+    if not (
+        answer is None
+        or isinstance(answer, str)
+        or (isinstance(answer, list) and all(isinstance(item, str) for item in answer))
+    ):
+        raise ValueError("answer must be a string, list of strings, or null")
+
+    logger.info("Sufficient to answer: %s", sufficient)
+    logger.info("Answer: %s", answer)
+    logger.info("Reason: %s", reason)
+
+    return answer, reason, sufficient
+
+
+# 解析反思判断结果
+def extract_add_and_reason(response):
+    data = parse_json_object(response)
+    add = data.get("add")
+    reason = data.get("reason")
+
+    if type(add) is not bool:
+        raise ValueError("add must be a boolean")
+
+    if not isinstance(reason, str):
+        raise ValueError("reason must be a string")
+
+    logger.info("Whether to backtrack: %s", add)
+    logger.info("Reason: %s", reason)
+
+    return add, reason
+
+
+
 
 def generate_without_explored_paths(question, subquestions, args):
     prompt = cot_prompt + question 
@@ -250,45 +272,39 @@ def reflection(question, selected_entity_ids, depth_entities_relations_entities_
     all_entities_set = clean_candidates_set
 
 
+    # 构造反思提示词
     chain_prompt = '\n'.join([', '.join([str(x) for x in chain]) for sublist in cluster_chain_of_entities for chain in sublist])
-    
-
-    prompt = judge_reverse+question+'\nEntities set to be retrieved: ' + str(list(set(sorted([entity_id_to_name[entity_id] for entity_id in remaining_entity_ids])))) +'\nMemory: '+history_memory+'\nKnowledge Triplets:'+chain_prompt
+    current_entity_names = sorted({entity_id_to_name[entity_id] for entity_id in remaining_entity_ids})
+    prompt = judge_reflection_prompt.substitute(question=question, entities=str(current_entity_names), memory=history_memory, knowledge_triplets=chain_prompt)
 
     cur_call_time += 1
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    for kk in token_num.keys():
-        cur_token[kk] += token_num[kk]
+    for token_type in token_num:
+        cur_token[token_type] += token_num[token_type]
 
     flag, reason = extract_add_and_reason(response)
-
     if flag:
+        # 保留CoG原有的候选实体过滤策略，仅修改编号选择与ID映射
+        other_entities = sorted(all_entities_set - set(remaining_entity_ids))
+        if other_entities:
+            numbered_entities = " ".join(f"[{i}] {entity_id_to_name[entity_id]}" for i, entity_id in enumerate(other_entities, start=1))
+            logger.info("\n[Backtracking]\nCandidate entities: %s", numbered_entities)
+            prompt = backtrack_entity_prompt.substitute(question=question, reason=reason, entity_candidates=numbered_entities, memory=history_memory)
 
-        other_entities = sorted(list(all_entities_set - set(remaining_entity_ids)))
-        other_entities_name = [entity_id_to_name[entity_id] for entity_id in other_entities]
-        
-        logger.info("filter already %s %s %s", [entity_id_to_name[entity_id] for entity_id in remaining_entity_ids], [entity_id_to_name[entity_id] for entity_id in all_entities_set], other_entities_name)
+            cur_call_time += 1
+            response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
+            for token_type in token_num:
+                cur_token[token_type] += token_num[token_type]
 
+            selected_ids = parse_selected_ids(response, len(other_entities))
+            reflection_entity_list = sorted(other_entities[i - 1] for i in selected_ids)
+            if reflection_entity_list:
+                logger.info("add reverse ent: %d %s", len(reflection_entity_list), [entity_id_to_name[entity_id] for entity_id in reflection_entity_list])
+                return remaining_entity_ids, reflection_entity_list, cur_call_time, cur_token
 
-        prompt = add_ent_prompt+question+'\nReason: '+reason+'\nCandidate Entities: ' + str(sorted(other_entities_name))+'\nMemory: '+history_memory
-
-        cur_call_time += 1
-        response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-
-        for kk in token_num.keys():
-            cur_token[kk] += token_num[kk]
-
-        reflection_entity_list = extract_add_ent(response)
-
-        reflection_entity_list = [entity_name_to_id[entity_id] for entity_id in reflection_entity_list if entity_id in other_entities_name]
-        reflection_entity_list = sorted(reflection_entity_list)
-        if reflection_entity_list:
-            logger.info("add reverse ent: %d %s", len(reflection_entity_list), [entity_id_to_name[entity_id] for entity_id in reflection_entity_list])
-            return remaining_entity_ids, reflection_entity_list, cur_call_time, cur_token
-            
     return remaining_entity_ids, [], cur_call_time, cur_token
 
-    
+
 def prepare_dataset(dataset_name):
     if dataset_name == 'cwq':
         with open("../../../data/test/cwq.json", encoding='utf-8') as f:

@@ -255,6 +255,10 @@ def relation_search_prune(entity_id, sub_questions, entity_name, pre_relations, 
     # 保证候选编号顺序稳定
     relation_candidates.sort(key=lambda item: (item["relation"], not item["head"]))
 
+    # 没有候选关系时直接返回
+    if not relation_candidates:
+        return [], {"total": 0, "input": 0, "output": 0}
+
     prompt = construct_relation_prune_prompt(question, sub_questions, entity_name, relation_candidates)
     result, token_num = run_llm(prompt, args.temperature_exploration, args.max_length, args.base_url, args.api_key, args.LLM_type)
     flag, retrieve_relations = select_relations(result, entity_id, relation_candidates)

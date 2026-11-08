@@ -224,14 +224,6 @@ def generate_without_explored_paths(question, subquestions, args):
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
     return response, token_num
 
-def break_question(question, args): 
-    prompt = subobjective_prompt + question
-    response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    first_brace_p = response.find('[')
-    last_brace_p = response.rfind(']')
-    response = response[first_brace_p:last_brace_p+1]
-    return response, token_num
-
 
 def break_question(question, args):
     prompt = subobjective_prompt.substitute(question=question)

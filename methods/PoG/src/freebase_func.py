@@ -190,15 +190,17 @@ def parse_relation_names(raw_text):
 
 
 # 从LLM输出中解析选择的关系
-def select_relations(string, entity_id, head_relations, tail_relations):
-    rel_list = parse_relation_names(string)
+def select_relations(response, entity_id, relation_candidates):
+    selected_ids = parse_selected_ids(response, len(relation_candidates))
 
     relations = []
-    for relation in rel_list:
-        if relation in head_relations:
-            relations.append({"entity": entity_id, "relation": relation, "head": True})
-        elif relation in tail_relations:
-            relations.append({"entity": entity_id, "relation": relation, "head": False})
+    for candidate_id in selected_ids:
+        candidate = relation_candidates[candidate_id - 1]
+        relations.append({
+            "entity": entity_id,
+            "relation": candidate["relation"],
+            "head": candidate["head"]
+        })
 
     if not relations:
         return False, "No relations found"
@@ -207,8 +209,18 @@ def select_relations(string, entity_id, head_relations, tail_relations):
 
 
 # 构造关系剪枝提示词
-def construct_relation_prune_prompt(question, sub_questions, entity_name, total_relations):
-    return extract_relation_prompt + question + '\nSubobjectives: ' + str(sub_questions) + '\nTopic Entity: ' + entity_name + '\nRelations: '+ '; '.join(total_relations)
+def construct_relation_prune_prompt(question, sub_questions, entity_name, relation_candidates):
+    numbered_relations = " ".join(
+        f"[{i}] [{'outgoing' if item['head'] else 'incoming'}] {item['relation']}"
+        for i, item in enumerate(relation_candidates, start=1)
+    )
+
+    return extract_relation_prompt.substitute(
+        question=question,
+        subobjectives=str(sub_questions),
+        entity_name=entity_name,
+        relations=numbered_relations
+    )
 
 
 # 关系搜索和剪枝
@@ -229,15 +241,23 @@ def relation_search_prune(entity_id, sub_questions, entity_name, pre_relations, 
         tail_relations = list(set(tail_relations) - set(pre_relations))
     else:
         head_relations = list(set(head_relations) - set(pre_relations))
-
-    head_relations = list(set(head_relations))
-    tail_relations = list(set(tail_relations))
-    total_relations = head_relations+tail_relations
-    total_relations.sort()
     
-    prompt = construct_relation_prune_prompt(question, sub_questions, entity_name, total_relations)
+    # 关系去重
+    head_relations = sorted(set(head_relations))
+    tail_relations = sorted(set(tail_relations))
+
+    # 构造带方向的候选关系
+    relation_candidates = (
+        [{"relation": relation, "head": True} for relation in head_relations] +
+        [{"relation": relation, "head": False} for relation in tail_relations]
+    )
+
+    # 保证候选编号顺序稳定
+    relation_candidates.sort(key=lambda item: (item["relation"], not item["head"]))
+
+    prompt = construct_relation_prune_prompt(question, sub_questions, entity_name, relation_candidates)
     result, token_num = run_llm(prompt, args.temperature_exploration, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    flag, retrieve_relations = select_relations(result, entity_id, head_relations, tail_relations) 
+    flag, retrieve_relations = select_relations(result, entity_id, relation_candidates)
 
     if flag:
         return retrieve_relations, token_num
@@ -381,45 +401,46 @@ def entity_condition_prune(question, entity_relation_entity_dict, entity_id_to_n
     for topic_entity_id, head_tail_dict in sorted(entity_relation_entity_dict.items()):
         for direction, relation_entity_dict in sorted(head_tail_dict.items()):
             for relation, entity_id_list in sorted(relation_entity_dict.items()):
-                # 判断当前的实体集合是否需要LLM剪枝，满足三个条件之一即可：是否都是纯数字字符串（is_all_digits）、关系是否属于"不进行剪枝的关系"、实体数量小于1
-                if is_all_digits(entity_id_list) or relation in non_prunable_relations or len(entity_id_list) <= 1:
-                    sorted_entity_names = [entity_id_to_name[entity_id] for entity_id in sorted(entity_id_list)]
-                    selected_entity_names_for_relation = sorted_entity_names
+                # 不需要LLM剪枝的情况，保留全部实体
+                if (is_all_digits(entity_id_list) or relation in non_prunable_relations or len(entity_id_list) <= 1):
+                    selected_entity_ids_for_relation = sorted(entity_id_list)
                 else:
-                    if all(entity_id_to_name[entity_id].startswith('m.') for entity_id in entity_id_list) and len(entity_id_list) > 10:
+                    if (all(entity_id_to_name[entity_id].startswith("m.") for entity_id in entity_id_list) and len(entity_id_list) > 10):
                         entity_id_list = random.sample(entity_id_list, 10)
 
-                    # 候选实体数量过多时，使用嵌入模型粗排
+                    # Embedding粗排
                     if len(entity_id_list) > args.max_embedding_candidates:
                         entity_names = [entity_id_to_name[entity_id] for entity_id in entity_id_list]
                         top_entity_names, _top_entity_scores = retrieve_top_docs(question, entity_names, embedding_model, args.max_embedding_candidates)
                         entity_id_list = [entity_name_to_id[entity_name] for entity_name in top_entity_names]
-                        # logger.info("Entities retained by embedding retrieval (%d): %s", args.max_embedding_candidates, ", ".join(top_entity_names))
 
-                    prompt = prune_entity_prompt + question +'\nTriples: '
-                    sorted_entity_names = [entity_id_to_name[entity_id] for entity_id in sorted(entity_id_list)]
-                    prompt += entity_id_to_name[topic_entity_id] + ' ' + relation + ' ' + str(sorted_entity_names)
+                    # 按实体ID排序，保证候选编号稳定
+                    candidate_entity_ids = sorted(entity_id_list)
 
+                    # 构造单行编号候选
+                    numbered_entities = " ".join(f"[{i}] {entity_id_to_name[eid]}" for i, eid in enumerate(candidate_entity_ids, start=1))
+
+                    # 构造Prompt
+                    prompt = entity_prune_prompt.substitute(
+                        question=question,
+                        entity_name=entity_id_to_name[topic_entity_id],
+                        relation=relation,
+                        entity_candidates=numbered_entities
+                    )
+
+                    # 调用LLM
                     call_count += 1
                     llm_response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
                     for token_type in token_num.keys():
                         token_usage[token_type] += token_num[token_type]
 
-                    # 解析LLM的输出
-                    last_brace_l = llm_response.rfind('[')
-                    last_brace_r = llm_response.rfind(']')
-                    if last_brace_l < last_brace_r:
-                        llm_response = llm_response[last_brace_l:last_brace_r+1]
-                    try:
-                        llm_response = eval(llm_response.strip())
-                    except:
-                        llm_response = llm_response.strip().strip("[").strip("]").split(', ')
-                        llm_response = [entity_name.strip("'") for entity_name in llm_response]
+                    # 解析选择的实体编号
+                    selected_ids = parse_selected_ids(llm_response, len(candidate_entity_ids))
 
-                    selected_entity_names_for_relation = sorted(llm_response)
-                    selected_entity_names_for_relation = [entity_name for entity_name in selected_entity_names_for_relation if entity_name in sorted_entity_names]
-
-                if len(selected_entity_names_for_relation) == 0 or all(entity_name == '' for entity_name in selected_entity_names_for_relation):
+                    # 根据编号直接恢复Freebase实体ID
+                    selected_entity_ids_for_relation = [candidate_entity_ids[i - 1] for i in selected_ids]
+                
+                if not selected_entity_ids_for_relation:
                     continue
 
                 if topic_entity_id not in pruned_entity_relation_entity_dict.keys():
@@ -429,19 +450,18 @@ def entity_condition_prune(question, entity_relation_entity_dict, entity_id_to_n
                 if relation not in pruned_entity_relation_entity_dict[topic_entity_id][direction].keys():
                     pruned_entity_relation_entity_dict[topic_entity_id][direction][relation] = []
                 
-                for selected_entity_name in selected_entity_names_for_relation:
-                    if selected_entity_name in sorted_entity_names:
-                        selected_entity_id = entity_name_to_id[selected_entity_name]
-                        pruned_entity_relation_entity_dict[topic_entity_id][direction][relation].append(selected_entity_id)
-                        selected_topic_entity_names.append(entity_id_to_name[topic_entity_id])
-                        selected_relations.append(relation)
-                        selected_entity_names.append(selected_entity_name)
-                        selected_entity_ids.append(selected_entity_id)
-                        selected_parent_entity_ids.append(topic_entity_id)
-                        if direction == 'head':
-                            selected_heads.append(True)
-                        else:
-                            selected_heads.append(False)
+                for selected_entity_id in selected_entity_ids_for_relation:
+                    selected_entity_name = entity_id_to_name[selected_entity_id]
+                    pruned_entity_relation_entity_dict[topic_entity_id][direction][relation].append(selected_entity_id)
+                    selected_topic_entity_names.append(entity_id_to_name[topic_entity_id])
+                    selected_relations.append(relation)
+                    selected_entity_names.append(selected_entity_name)
+                    selected_entity_ids.append(selected_entity_id)
+                    selected_parent_entity_ids.append(topic_entity_id)
+                    if direction == "head":
+                        selected_heads.append(True)
+                    else:
+                        selected_heads.append(False)
 
     if len(selected_entity_ids) == 0:
         return False, [], [], [], [], [], pruned_entity_relation_entity_dict, call_count, token_usage

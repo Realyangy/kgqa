@@ -1,28 +1,50 @@
+from string import Template
 
-subobjective_prompt = """Please break down the process of answering the question into as few subobjectives as possible based on semantic analysis.
-Here is an example: 
-Q: Which of the countries in the Caribbean has the smallest country calling code?
-Output: ['Search the countries in the Caribbean', 'Search the country calling code for each Caribbean country', 'Compare the country calling codes to find the smallest one']
-
-Now you need to directly output subobjectives of the following question in list format without other information or notes. 
-Q: """
-
-
-
-extract_relation_prompt = """Please provide as few highly relevant relations as possible to the question and its subobjectives from the following relations (separated by semicolons).
+subobjective_prompt = Template("""Please break down the process of answering the question into as few subobjectives as possible based on semantic analysis.
 Here is an example:
-Q: Name the president of the country whose main spoken language was Brahui in 1980?
+Question: Which of the countries in the Caribbean has the smallest country calling code?
+Output: {
+    "subobjectives": [
+        "Search the countries in the Caribbean",
+        "Search the country calling code for each Caribbean country",
+        "Compare the country calling codes to find the smallest one"
+    ]
+}
+
+Now you need to directly output subobjectives of the following question in JSON format using the "subobjectives" field without other information or notes.
+Question: $question
+Output: """)
+
+
+extract_relation_prompt = Template("""Please provide as few highly relevant relations as possible to the question and its subobjectives from the numbered candidate relations (with their directions).
+Here is an example:
+Question: Name the president of the country whose main spoken language was Brahui in 1980?
 Subobjectives: ['Identify the countries where the main spoken language is Brahui', 'Find the president of each country', 'Determine the president from 1980']
 Topic Entity: Brahui Language
-Relations: language.human_language.main_country; language.human_language.language_family; language.human_language.iso_639_3_code; base.rosetta.languoid.parent; language.human_language.writing_system; base.rosetta.languoid.languoid_class; language.human_language.countries_spoken_in; kg.object_profile.prominent_type; base.rosetta.languoid.document; base.ontologies.ontology_instance.equivalent_instances; base.rosetta.languoid.local_name; language.human_language.region
-The output is: 
-['language.human_language.main_country','language.human_language.countries_spoken_in','base.rosetta.languoid.parent']
+Relations: [1] [outgoing] language.human_language.main_country [2] [outgoing] language.human_language.language_family [3] [outgoing] language.human_language.iso_639_3_code [4] [incoming] base.rosetta.languoid.parent [5] [outgoing] language.human_language.countries_spoken_in
+Output: {"selected_ids": [1, 5, 4]}
 
-Now you need to directly output relations highly related to the following question and its subobjectives in list format without other information or notes.
-Q: """
+Now you need to directly output the numbers of relations highly related to the following question and its subobjectives in JSON format using the "selected_ids" field without other information or notes.
+Question: $question
+Subobjectives: $subobjectives
+Topic Entity: $entity_name
+Relations: $relations
+Output: """)
+
+
+entity_prune_prompt = Template("""Which entities in the following numbered candidates in Triplets can be used to answer question? Please provide the minimum possible number of entities, and strictly adhering to the constraints mentioned in the question.
+Here is an example:
+Question: The movie featured Miley Cyrus and was produced by Tobin Armbrust?
+Triplets: Tobin Armbrust film.producer.film [1] The Resident [2] So Undercover [3] Let Me In [4] Begin Again [5] The Quiet Ones [6] A Walk Among the Tombstones
+Output: {"selected_ids": [2]}
+
+Now you need to directly output the entity numbers from the numbered candidates in Triplets for the following question in JSON format using the "selected_ids" field without other information or notes.
+Question: $question
+Triplets: $entity_name $relation $entity_candidates
+Output:""")
+
 
 answer_prompt = """Given a question and the associated retrieved knowledge graph triplets (entity, relation, entity), you are asked to answer the question with these triplets and your knowledge.
-
 Here are five examples:
 Q: Find the person who said \"Taste cannot be controlled by law\", what did this person die from?
 Knowledge Triplets: Taste cannot be controlled by law., media_common.quotation.author, Thomas Jefferson
@@ -93,15 +115,6 @@ The output is:
 Now you need to directly output the results of the following question in JSON format (must include "A" and "R") without other information or notes.
 Q: """
 
-prune_entity_prompt = """
-Which entities in the following list ([] in Triples) can be used to answer question? Please provide the minimum possible number of entities, and strictly adhering to the constraints mentioned in the question. 
-Here is an example:
-Q: The movie featured Miley Cyrus and was produced by Tobin Armbrust?
-Triplets: Tobin Armbrust film.producer.film ['The Resident', 'So Undercover', 'Let Me In', 'Begin Again', 'The Quiet Ones', 'A Walk Among the Tombstones']
-Output: ['So Undercover']
-
-Now you need to directly output the entities from [] in Triplets for the following question in list format without other information or notes.
-Q: """
 
 update_mem_prompt = """Based on the provided information (which may have missing parts and require further retrieval) and your own knowledge, output the currently known information required to achieve the subobjectives.
 Here is an example:

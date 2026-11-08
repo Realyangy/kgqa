@@ -34,7 +34,7 @@ if __name__ == '__main__':
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
     parser.add_argument("--dataset_sample_num", type=int, default=500, help="Number of dataset samples to evaluate. Use None for all samples.")
     parser.add_argument("--dataset_sample_seed", type=int, default=42, help="Random seed used only for selecting the evaluation subset.")
-    parser.add_argument("--model_name", type=str, default="DeepSeekV4.1-Flash", choices=MODELS_DICT.keys(), help="Model configuration name defined in MODELS_DICT.")
+    parser.add_argument("--model_name", type=str, default="Qwen3.5-27b-AWQ-4bit", choices=MODELS_DICT.keys(), help="Model configuration name defined in MODELS_DICT.")
     parser.add_argument("--max_length", type=int, default=512, help="the max length of LLMs output.") # 注意，后面的实体打分时的max-length修改成1024了
     parser.add_argument("--temperature_exploration", type=float, default=0.4, help="the temperature in exploration stage.")
     parser.add_argument("--temperature_reasoning", type=float, default=0, help="the temperature in reasoning stage.")

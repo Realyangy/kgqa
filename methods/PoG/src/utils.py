@@ -7,7 +7,6 @@ from logging_utils import logger
 from sentence_transformers import util
 
 from prompt_list import *
-from prompt_list import *
 
 def retrieve_top_docs(query, docs, model, width=3):
     query_emb = model.encode(query)
@@ -55,6 +54,50 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="qwen3.5-
         "output": completion.usage.completion_tokens
     }
     return result, token_num
+
+
+
+# 解析LLM输出的JSON对象
+def parse_json_object(response):
+    if not isinstance(response, str):
+        raise ValueError("LLM response is not a string")
+
+    text = response.strip()
+
+    # 兼容Markdown代码块
+    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError("Invalid JSON response") from error
+
+    if not isinstance(data, dict):
+        raise ValueError("JSON response must be an object")
+
+    return data
+
+
+# 解析LLM选择的候选编号
+def parse_selected_ids(response, candidate_count):
+    data = parse_json_object(response)
+    selected_ids = data.get("selected_ids")
+    if not isinstance(selected_ids, list):
+        raise ValueError("selected_ids must be a list")
+
+    selected_set = set()
+    for candidate_id in selected_ids:
+        if type(candidate_id) is not int:
+            raise ValueError(f"Invalid candidate ID: {candidate_id}")
+        if not 1 <= candidate_id <= candidate_count:
+            raise ValueError(f"Candidate ID out of range: {candidate_id}")
+        if candidate_id in selected_set:
+            raise ValueError(f"Duplicate candidate ID: {candidate_id}")
+        selected_set.add(candidate_id)
+
+    return selected_ids
 
 
 def convert_dict_name(ent_rel_ent_dict, entid_name):
@@ -188,6 +231,21 @@ def break_question(question, args):
     last_brace_p = response.rfind(']')
     response = response[first_brace_p:last_brace_p+1]
     return response, token_num
+
+
+def break_question(question, args):
+    prompt = subobjective_prompt.substitute(question=question)
+    response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
+    data = parse_json_object(response)
+    sub_questions = data.get("subobjectives")
+
+    if not isinstance(sub_questions, list):
+        raise ValueError("subobjectives must be a list")
+    if not all(isinstance(item, str) for item in sub_questions):
+        raise ValueError("Each subobjective must be a string")
+
+    return sub_questions, token_num
+
 
 def get_subquestions(q_mem_f_path, question, args):
     sub_questions, token_num = break_question(question, args)

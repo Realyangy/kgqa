@@ -49,6 +49,45 @@ def extract_predictions(value):
     return [text]
 
 
+# 输出评估结果
+def print_evaluation_table(num_right, num_error, total, call_num_list, time_list, token_num_list):
+    def average(values):
+        return f"{np.mean(values):,.2f}" if values else "N/A"
+    
+    accuracy = f"{num_right / total:.2%}" if total else "N/A"
+    metric_width = 20
+    value_width = 10
+    border = ("=" * metric_width + "=" * value_width)
+
+    def section(title):
+        print(f"{title:<{metric_width + value_width}}")
+        print(border)
+
+    def row(metric, value):
+        print(f"{metric:<{metric_width}} | {str(value):<{len(str(value))}}")
+
+    print(border)
+
+    # 性能
+    section("Performance")
+    row("Evaluated Samples", total)
+    row("Accuracy", accuracy)
+    row("Correct", num_right)
+    row("Incorrect", num_error)
+    print(border)
+
+    # 计算开销（每题平均）
+    section("Computational Cost")
+    row("Avg.LLM Calls", average(call_num_list))
+    row("Avg.Input Tokens", average(token_num_list["input"]))
+    row("Avg.Output Tokens", average(token_num_list["output"]))
+    row("Avg.Total Tokens", average(token_num_list["total"]))
+    row("Avg.Time (s)", average(time_list))
+
+    print(border)
+
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
@@ -80,11 +119,11 @@ if __name__ == '__main__':
 
     if args.dataset == 'cwq':
         type_field = 'compositionality_type'
-        with open('../cope_alias/cwq_aname_dict.json', 'r', encoding='utf-8') as f:
+        with open('cope_alias/cwq_aname_dict.json', 'r', encoding='utf-8') as f:
             aname_dict = json.load(f)
-        with open('../cope_alias/CWQ_aliase_data31158.json', 'r', encoding='utf-8') as f:
+        with open('cope_alias/CWQ_aliase_data31158.json', 'r', encoding='utf-8') as f:
             alias_dict = json.load(f)
-        with open('../cope_alias/ComplexWebQuestions_test_wans.json', 'r', encoding='utf-8') as f:
+        with open('cope_alias/ComplexWebQuestions_test_wans.json', 'r', encoding='utf-8') as f:
             q_all_list = json.load(f)
             for q_item in q_all_list:
                 ans_list = []
@@ -99,7 +138,7 @@ if __name__ == '__main__':
                 add_ans_alias_dict[q_item['question']] = ans_list
 
     elif args.dataset == 'webqsp':
-        with open('../cope_alias/WQSP_aliase_data.json', 'r', encoding='utf-8') as f:
+        with open('cope_alias/WQSP_aliase_data.json', 'r', encoding='utf-8') as f:
             alias_dict = json.load(f)
     elif args.dataset == 'grailqa':
         type_field = 'level'
@@ -144,15 +183,13 @@ if __name__ == '__main__':
             num_error += 1
             error_question.append(data[question_string])
 
-    print("Exact Match: {:.4f}".format(num_right / len(output_datas)))
-    print("Right: {}, Error: {}".format(num_right, num_error))
-    print("Evaluated samples:", len(output_datas))
-    if call_num_list:
-        print("Average call num:", np.mean(call_num_list))
-        print("Average time:", np.mean(time_list))
-
-        for t_type, values in token_num_list.items():
-            print(f"Average {t_type} token:", np.mean(values))
-    else:
-        print("Call/time/token statistics: N/A")
+    # 打印结果
+    print_evaluation_table(
+        num_right=num_right,
+        num_error=num_error,
+        total=len(output_datas),
+        call_num_list=call_num_list,
+        time_list=time_list,
+        token_num_list=token_num_list,
+    )
 

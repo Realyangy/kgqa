@@ -12,15 +12,15 @@ def read_output(file_path, question_string):
 
 def prepare_dataset_for_eval(dataset_name, output_file):
     if dataset_name == 'cwq':
-        with open('../../data/test/cwq.json',encoding='utf-8') as f:
+        with open('../data/test/cwq.json',encoding='utf-8') as f:
             datas = json.load(f)
         question_string = 'question'
     elif dataset_name == 'webqsp':
-        with open('../../data/test/webqsp.json',encoding='utf-8') as f:
+        with open('../data/test/webqsp.json',encoding='utf-8') as f:
             datas = json.load(f)
         question_string = 'RawQuestion'
     elif dataset_name == 'grailqa':
-        with open('../../data/test/graliqa.json',encoding='utf-8') as f:
+        with open('../data/test/graliqa.json',encoding='utf-8') as f:
             datas = json.load(f)
         question_string = 'question'
     else:

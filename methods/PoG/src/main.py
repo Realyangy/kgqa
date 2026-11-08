@@ -288,17 +288,14 @@ if __name__ == '__main__':
                     for token_type in token_num.keys():
                         all_tokens[token_type] += token_num[token_type]
 
-                    # 答案提取失败的情况
-                    if (
-                        str(answer).lower() == 'null' or
-                        str(answer).lower() == 'none' or
-                        str(answer).startswith('m.') or
-                        str(answer).startswith('[\"m.') or
-                        str(answer).startswith("['m.") or
-                        'yes' not in str(sufficient).lower()):
-                        stop = False
-                    else:
-                        stop = True
+                    # 判断是否能够停止搜索
+                    answer_text = str(answer).strip()
+                    stop = (
+                        sufficient
+                        and answer is not None
+                        and answer_text.lower() not in {"", "null", "none", "[]"}
+                        and not answer_text.startswith(("m.", '["m.', "['m."))
+                    )
 
                     # LLM判断证据充分后，保存答案并停止搜索
                     if stop:

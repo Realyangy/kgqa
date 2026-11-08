@@ -528,7 +528,6 @@ def update_memory(question, subquestions, entity_relation_entity_dict, entity_id
     # 读取历史记忆
     with open(memory_path / 'mem', 'r', encoding='utf-8') as f:
         his_mem = f.read()
-    prompt = update_mem_prompt + question + '\nSubobjectives: '+str(subquestions)+'\nMemory: ' + his_mem
 
     # 构造检索到的KG路径
     chain_prompt = ''
@@ -536,26 +535,30 @@ def update_memory(question, subquestions, entity_relation_entity_dict, entity_id
         for directions, relations_entities_dict in sorted(head_tail_relations_dict.items()):
             for relation, entities_list in sorted(relations_entities_dict.items()):
                 sorted_e_list = [entity_id_name[e_id] for e_id in sorted(entities_list)]
-                chain_prompt += entity_id_name[topic_entities] + ' ' + relation + ' ' + str(sorted_e_list) + '\n'
+                chain_prompt += (entity_id_name[topic_entities] + ' ' + relation + ' ' + str(sorted_e_list) + '\n')
 
-    # 调用LLM，这里会引入幻觉
-    prompt += "\nKnowledge Triplets:\n" + chain_prompt
+    # 构造Prompt
+    prompt = update_mem_prompt.substitute(
+        question=question,
+        subobjectives=str(subquestions),
+        memory=his_mem,
+        knowledge_triplets=chain_prompt
+    )
+
+    # 调用LLM
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    memory = extract_memory(response)
+    memory_items = parse_json_object(response)
+
     logger.info("\n[Memory Update]")
-    try:
-        memory_items = json.loads(memory)
-    except json.JSONDecodeError:
-        logger.info("%s", memory)
-    else:
-        if isinstance(memory_items, dict):
-            for subobjective_id, statement in memory_items.items():
-                logger.info("%s. %s", subobjective_id, statement)
-        else:
-            logger.info("%s", memory)
+    for subobjective_id, statement in memory_items.items():
+        logger.info("%s. %s", subobjective_id, statement)
+
+    # 保存为标准JSON，供后续推理和反思读取
     with open(memory_path / 'mem', 'w', encoding='utf-8') as f:
-        f.write(memory)
+        json.dump(memory_items, f, ensure_ascii=False, indent=4)
+
     return token_num
+
 
 
 # 根据本轮检索结果，判断是否能够回答
@@ -563,18 +566,24 @@ def reasoning(question, entity_relation_entity_dict, entity_id_name, memory_path
     with open(memory_path / 'mem', 'r', encoding='utf-8') as f:
         history_memory = f.read()
 
-    prompt = answer_depth_prompt + question + '\nMemory: ' + history_memory
+    # 构造本轮检索到的KG三元组
     chain_prompt = ''
     for topic_entities, head_tail_relations_dict in sorted(entity_relation_entity_dict.items()):
         for directions, relations_entities_dict in sorted(head_tail_relations_dict.items()):
             for relation, entities_list in sorted(relations_entities_dict.items()):
                 sorted_e_list = [entity_id_name[e_id] for e_id in sorted(entities_list)]
-                chain_prompt += entity_id_name[topic_entities] + ', ' + relation + ', ' + str(sorted_e_list) + '\n'
+                chain_prompt += (entity_id_name[topic_entities] + ', ' + relation + ', ' + str(sorted_e_list) + '\n')
 
-    prompt += "\nKnowledge Triplets:\n" + chain_prompt
+    prompt = evaluate_prompt.substitute(
+        question=question,
+        memory=history_memory,
+        knowledge_triplets=chain_prompt
+    )
     logger.info("\n[Reasoning]")
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
     answer, reason, sufficient = extract_reason_and_anwer(response)
+
     return response, answer, sufficient, token_num
+
 
     

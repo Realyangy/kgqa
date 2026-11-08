@@ -164,58 +164,56 @@ def load_previous_results(output_file, question_string):
                 previous_results[question] = result
     return previous_results
 
-def extract_add_ent(string):
-    first_brace_p = string.find('[')
-    last_brace_p = string.rfind(']')
-    string = string[first_brace_p:last_brace_p+1]
-    try:
-        new_string = eval(string)
-    except:
-        s_list = string.split('\', \'')
-        if len(s_list) == 1:
-            new_string = [s_list[0].strip('[\'').strip('\']')]
-        else:
-            new_string = [s.strip('[\'').strip('\']') for s in s_list]
-    return new_string
 
-def extract_memory(string):
-    first_brace_p = string.find('{')
-    last_brace_p = string.rfind('}')
-    string = string[first_brace_p:last_brace_p+1]
-    return string
+# 解析充分性判断结果
+def extract_reason_and_anwer(response):
+    data = parse_json_object(response)
 
-def extract_reason_and_anwer(string):
-    first_brace_p = string.find('{')
-    last_brace_p = string.rfind('}')
-    string = string[first_brace_p:last_brace_p+1]
-    answer = re.search(r'"Answer":\s*"(.*?)"', string)
-    if answer:
-        answer = answer.group(1)
-    else:
-        answer = re.search(r'"Answer":\s*(\[[^\]]+\])', string).group(1)
+    # 验证充分性判断
+    sufficient = data.get("sufficient")
+    if type(sufficient) is not bool:
+        raise ValueError("sufficient must be a boolean")
 
-    reason = re.search(r'"R":\s*"(.*?)"', string).group(1)
-    sufficient = re.search(r'"Sufficient":\s*"(.*?)"', string).group(1)
+    # 验证原因
+    reason = data.get("reason")
+    if not isinstance(reason, str):
+        raise ValueError("reason must be a string")
+
+    # 验证答案
+    if "answer" not in data:
+        raise ValueError("Missing answer field")
+
+    answer = data["answer"]
+    if not (
+        answer is None
+        or isinstance(answer, str)
+        or (isinstance(answer, list) and all(isinstance(item, str) for item in answer))
+    ):
+        raise ValueError("answer must be a string, list of strings, or null")
+
     logger.info("Sufficient to answer: %s", sufficient)
-    if sufficient.lower() == "yes":
-        logger.info("Answer: %s", answer)
+    logger.info("Answer: %s", answer)
     logger.info("Reason: %s", reason)
+
     return answer, reason, sufficient
 
-def extract_add_and_reason(string):
-    first_brace_p = string.find('{')
-    last_brace_p = string.rfind('}')
-    string = string[first_brace_p:last_brace_p+1]
-    flag = re.search(r'"Add":\s*"(.*?)"', string).group(1)
-    reason = re.search(r'"Reason":\s*"(.*?)"', string).group(1)
 
-    logger.info("Whether to backtrack: %s", flag)
+# 解析反思判断结果
+def extract_add_and_reason(response):
+    data = parse_json_object(response)
+    add = data.get("add")
+    reason = data.get("reason")
+
+    if type(add) is not bool:
+        raise ValueError("add must be a boolean")
+
+    if not isinstance(reason, str):
+        raise ValueError("reason must be a string")
+
+    logger.info("Whether to backtrack: %s", add)
     logger.info("Reason: %s", reason)
-    if 'yes' in flag.lower():
-        return True, reason
-    else:
-        return False, reason
-    
+
+    return add, reason
 
 
 def generate_without_explored_paths(question, subquestions, args):
@@ -279,37 +277,56 @@ def reflection(question, enititiy_ids, depth_entity_relation_entity_dict, entity
 
                     # 将检索到的候选实体也加入all_entities_set
                     all_entities_set |= (set(entities_list))
-
+    
     # 构造反思提示词
-    chain_prompt = '\n'.join([', '.join([str(x) for x in chain]) for sublist in cluster_chain_of_entities for chain in sublist])
-    prompt = judge_reverse + question + '\nEntities set to be retrieved: ' + str(list(set(sorted([entity_id_name[ent_i] for ent_i in new_enititiy_ids])))) +'\nMemory: '+ history_memory + '\nKnowledge Triplets:' + chain_prompt
+    chain_prompt = '\n'.join(', '.join(str(x) for x in chain) for sublist in cluster_chain_of_entities for chain in sublist)
+    current_entity_names = sorted({entity_id_name[entity_id] for entity_id in new_enititiy_ids})
+
+    prompt = judge_reflection_prompt.substitute(
+        question=question,
+        entities=str(current_entity_names),
+        memory=history_memory,
+        knowledge_triplets=chain_prompt
+    )
     cur_call_time += 1
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    for token_type in token_num.keys():
+    for token_type in token_num:
         cur_token[token_type] += token_num[token_type]
+
+    # 解析是否需要补充实体
     flag, reason = extract_add_and_reason(response)
 
     if flag:
-        # new_enititiy_ids是本轮实体剪枝后仍然保留，将会作为下一轮迭代的起点实体的实体，这里把它们去掉，剩下的就是LLM之前没有选择，现在可以重新选择的候选实体
-        other_entities = sorted(list(all_entities_set - set(new_enititiy_ids)))
-        other_entities_name = [entity_id_name[entity_id] for entity_id in other_entities]
+        # 排除下一轮已经保留的实体，得到可回溯的历史候选实体
+        other_entities = sorted(all_entities_set - set(new_enititiy_ids))
 
-        # 需要回溯时，调用LLM判断选择哪个实体作为回溯起点
-        logger.info("\n[Backtracking]\nCandidate entities: %s", ", ".join(other_entities_name))
-        prompt = add_ent_prompt+question+'\nReason: '+reason+'\nCandidate Entities: ' + str(sorted(other_entities_name))+'\nMemory: '+ history_memory
-        cur_call_time += 1
-        response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-        for token_type in token_num.keys():
-            cur_token[token_type] += token_num[token_type]
+        if other_entities:
+            # 构造编号候选，编号直接对应实体ID
+            numbered_entities = " ".join(f"[{i}] {entity_id_name[entity_id]}" for i, entity_id in enumerate(other_entities, start=1))
+            logger.info("\n[Backtracking]\nCandidate entities: %s", numbered_entities)
 
-        # 提取LLM选择的回溯实体，根据候选列表检查，避免幻觉输出
-        add_ent_list = extract_add_ent(response)
-        add_ent_list = [entity_name_id[ent_i] for ent_i in add_ent_list if ent_i in other_entities_name]
-        add_ent_list = sorted(add_ent_list)
-        if add_ent_list:
-            logger.info("Selected history entities: %s", ", ".join(entity_id_name[ent_i] for ent_i in add_ent_list))
-            return new_enititiy_ids, add_ent_list, cur_call_time, cur_token
+            prompt = backtrack_entity_prompt.substitute(
+                question=question,
+                reason=reason,
+                entity_candidates=numbered_entities,
+                memory=history_memory
+            )
+            cur_call_time += 1
+            response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
+            for token_type in token_num:
+                cur_token[token_type] += token_num[token_type]
+
+            # 解析选择的编号
+            selected_ids = parse_selected_ids(response, len(other_entities))
+
+            # 根据编号直接恢复历史实体ID
+            add_ent_list = sorted(other_entities[i - 1] for i in selected_ids)
+            if add_ent_list:
+                logger.info("Selected history entities: %s", ", ".join(entity_id_name[entity_id] for entity_id in add_ent_list))
+                return (new_enititiy_ids, add_ent_list, cur_call_time, cur_token)
+
     return new_enititiy_ids, [], cur_call_time, cur_token
+
 
 
 def prepare_dataset(dataset_name):

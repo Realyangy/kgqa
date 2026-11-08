@@ -534,10 +534,10 @@ def restore_backtrack_context(add_ent_list, depth_entities_relations_entities_di
 
     return add_entities_id, add_relations, add_head, new_entity_relation_entity_dict
 
+# 根据检索结果更新记忆
 def update_memory(question, subquestions, ent_rel_ent_dict, entid_name, cluster_chain_of_entities, memory_path, args):
     with open(memory_path+'/mem', 'r', encoding='utf-8') as f:
         his_mem = f.read()
-    prompt = update_mem_prompt + question + '\nSubobjectives: '+str(subquestions)+'\nMemory: ' + his_mem
 
     chain_prompt = ''
     for topic_entities, head_tail_relations_dict in sorted(ent_rel_ent_dict.items()):
@@ -546,35 +546,34 @@ def update_memory(question, subquestions, ent_rel_ent_dict, entid_name, cluster_
                 sorted_e_list = [entid_name[e_id] for e_id in sorted(entities_list)]
                 chain_prompt += entid_name[topic_entities] + ' ' + relation + ' ' + str(sorted_e_list) + '\n'
 
-    prompt += "\nKnowledge Triplets:\n" + chain_prompt
-
+    prompt = update_mem_prompt.substitute(question=question, subobjectives=str(subquestions), memory=his_mem, knowledge_triplets=chain_prompt)
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    
-    mem = extract_memory(response)
-    logger.info("%s", mem)
+    memory_items = parse_json_object(response)
+
+    logger.info("\n[Memory Update]")
+    for subobjective_id, statement in memory_items.items():
+        logger.info("%s. %s", subobjective_id, statement)
+
     with open(memory_path+'/mem', 'w', encoding='utf-8') as f:
-        f.write(mem)
+        json.dump(memory_items, f, ensure_ascii=False, indent=4)
     return token_num
 
 
+# 根据本轮检索结果判断证据是否充分
 def reasoning(question, subquestions, ent_rel_ent_dict, entid_name, cluster_chain_of_entities, memory_path, args):
     with open(memory_path+'/mem', 'r', encoding='utf-8') as f:
         history_memory = f.read()
 
-    prompt = answer_depth_prompt + question + '\nMemory: ' + history_memory
-
     chain_prompt = ''
-
     for topic_entities, head_tail_relations_dict in sorted(ent_rel_ent_dict.items()):
         for directions, relations_entities_dict in sorted(head_tail_relations_dict.items()):
             for relation, entities_list in sorted(relations_entities_dict.items()):
                 sorted_e_list = [entid_name[e_id] for e_id in sorted(entities_list)]
                 chain_prompt += entid_name[topic_entities] + ', ' + relation + ', ' + str(sorted_e_list) + '\n'
 
-    prompt += "\nKnowledge Triplets:\n" + chain_prompt
-
+    prompt = evaluate_prompt.substitute(question=question, memory=history_memory, knowledge_triplets=chain_prompt)
+    logger.info("\n[Reasoning]")
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    
     answer, reason, sufficient = extract_reason_and_anwer(response)
     return response, answer, sufficient, token_num
 

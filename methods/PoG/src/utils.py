@@ -45,16 +45,41 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="qwen3.5-
             max_tokens=max_tokens,
             frequency_penalty=0,
             presence_penalty=0,
+            response_format={"type": "json_object"},
             extra_body=extra_body
             )
-    result = completion.choices[0].message.content
+
+    choice = completion.choices[0]
+    result = choice.message.content
+
+    # 检查输出是否被截断
+    if choice.finish_reason == "length":
+        raise ValueError("LLM JSON output was truncated")
+
+    # 检查空输出
+    if not result or not result.strip():
+        raise ValueError("LLM returned empty JSON")
+
+    # 验证返回的是JSON对象
+    try:
+        data = json.loads(result)
+    except json.JSONDecodeError as error:
+        raise ValueError("LLM returned invalid JSON") from error
+
+    if not isinstance(data, dict):
+        raise ValueError("LLM JSON output must be an object")
+
+    # 统计Token开销
+    if completion.usage is None:
+        raise ValueError("LLM response is missing token usage")
+
     token_num = {
         "total": completion.usage.total_tokens,
         "input": completion.usage.prompt_tokens,
         "output": completion.usage.completion_tokens
     }
-    return result, token_num
 
+    return result, token_num
 
 
 # 解析LLM输出的JSON对象

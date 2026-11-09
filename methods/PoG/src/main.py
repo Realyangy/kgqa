@@ -68,7 +68,7 @@ def disable_net_proxy():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", type=str, default="Qwen3.5-27b-AWQ-4bit", choices=MODELS_DICT.keys(), help="Model configuration name defined in MODEL_DICT.")
+    parser.add_argument("--model_name", type=str, default="DeepSeekV4.1-Flash", choices=MODELS_DICT.keys(), help="Model configuration name defined in MODEL_DICT.")
     parser.add_argument("--max_length", type=int, default=4096, help="the max length of LLMs output.")
     parser.add_argument("--temperature_exploration", type=float, default=0.3, help="the temperature in exploration stage.")
     parser.add_argument("--temperature_reasoning", type=float, default=0.3, help="the temperature in reasoning stage.")

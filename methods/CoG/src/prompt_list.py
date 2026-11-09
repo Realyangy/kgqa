@@ -1,26 +1,70 @@
 from string import Template
 
-subobjective_prompt = """Please break down the process of answering the question into as few subobjectives as possible based on semantic analysis.
-Here is an example: 
-Q: Which of the countries in the Caribbean has the smallest country calling code?
-Output: ['Search the countries in the Caribbean', 'Search the country calling code for each Caribbean country', 'Compare the country calling codes to find the smallest one']
-
-Now you need to directly output subobjectives of the following question in list format without other information or notes. 
-Q: """
-
-
-
-extract_relation_prompt = """Please provide as few highly relevant relations as possible to the question and its subobjectives from the following relations (separated by semicolons).
+subobjective_prompt = Template("""Please break down the process of answering the question into as few subobjectives as possible based on semantic analysis.
 Here is an example:
-Q: Name the president of the country whose main spoken language was Brahui in 1980?
+Question: Which of the countries in the Caribbean has the smallest country calling code?
+Output: {
+    "subobjectives": [
+        "Search the countries in the Caribbean",
+        "Search the country calling code for each Caribbean country",
+        "Compare the country calling codes to find the smallest one"
+    ]
+}
+
+Now you need to directly output subobjectives of the following question in JSON format using the "subobjectives" field without other information or notes.
+Question: $question
+Output: """)
+
+
+relation_extract_prompt = Template("""Please provide as few highly relevant relations as possible to the question and its subobjectives from the following numbered candidate relations (with their directions).
+Here is an example:
+Question: Name the president of the country whose main spoken language was Brahui in 1980?
 Subobjectives: ['Identify the countries where the main spoken language is Brahui', 'Find the president of each country', 'Determine the president from 1980']
 Topic Entity: Brahui Language
-Relations: language.human_language.main_country; language.human_language.language_family; language.human_language.iso_639_3_code; base.rosetta.languoid.parent; language.human_language.writing_system; base.rosetta.languoid.languoid_class; language.human_language.countries_spoken_in; kg.object_profile.prominent_type; base.rosetta.languoid.document; base.ontologies.ontology_instance.equivalent_instances; base.rosetta.languoid.local_name; language.human_language.region
-The output is: 
-['language.human_language.main_country','language.human_language.countries_spoken_in','base.rosetta.languoid.parent']
+Relations: [1] [outgoing]language.human_language.main_country [2] [outgoing]language.human_language.language_family [3] [outgoing]language.human_language.iso_639_3_code [4] [incoming]base.rosetta.languoid.parent [5] [outgoing]language.human_language.writing_system [6] [outgoing]base.rosetta.languoid.languoid_class [7] [outgoing]language.human_language.countries_spoken_in [8] [outgoing]kg.object_profile.prominent_type [9] [outgoing]base.rosetta.languoid.document [10] [outgoing]base.ontologies.ontology_instance.equivalent_instances [11] [outgoing]base.rosetta.languoid.local_name [12] [outgoing]language.human_language.region
+Output: {"selected_ids": [1, 7, 4]}
 
-Now you need to directly output relations highly related to the following question and its subobjectives in list format without other information or notes.
-Q: """
+Now you need to directly output the numbers of relations highly related to the following question and its subobjectives in JSON format using the "selected_ids" field without other information or notes.
+Question: $question
+Subobjectives: $subobjectives
+Topic Entity: $entity_name
+Relations: $relations
+Output: """)
+
+
+entity_prune_prompt = Template("""Which entities in the following numbered candidates in Triplets can be used to answer question? Please provide the minimum possible number of entities, strictly following the constraints in the question.
+Critical Instructions for Pruning:
+1. Remove when clearly impossible:
+   Only REMOVE an entity if it is clearly incompatible with the question based on the text itself
+   (e.g., wrong answer type, wrong time/number, or obviously unrelated meaning).
+2. When unsure, keep:
+   If you are not sure whether an entity satisfies the constraints, do NOT delete it just based on a guess.
+   It is better to keep uncertain but possibly relevant entities.
+3. Efficiency:
+   You MUST select at most 5 entities in total (including names and IDs).
+   If more than 5 entities look possibly relevant or uncertain, choose up to 5 that best match the question
+   (prefer earlier entities in the list and those sharing important words with the question).
+4. All useless case:
+   Only if every entity clearly cannot answer the question, you may output an empty selection.
+
+Here are three examples:
+Question: Which movies directed by Chris Renaud have featured Taylor Swift?
+Triplets: Chris Renaud film.director.film [1] The Secret Life of Pets [2] No Time for Nuts [3] Despicable Me [4] The Lorax [5] Despicable Me 2
+Output: {"selected_ids": [4, 3, 5]}
+
+Question: The movie featured Miley Cyrus and was produced by Tobin Armbrust?
+Triplets: Tobin Armbrust film.producer.film [1] The Resident [2] So Undercover [3] Let Me In [4] Begin Again [5] The Quiet Ones [6] A Walk Among the Tombstones
+Output: {"selected_ids": [2]}
+
+Question: Who served in the 21st Illinois Volunteer Infantry Regiment that also fought in the battle of Vicksburg?
+Triplets: 21st Illinois Volunteer Infantry Regiment military.military_person.participated_in_conflicts [1] James B. McPherson [2] William F. Draper [3] Ulysses S. Grant [4] Henry Casey [5] Henry Dow
+Output: {"selected_ids": [3]}
+
+Now you need to directly output the entity numbers from the numbered candidates in Triplets for the following question in JSON format using the "selected_ids" field without other information or notes.
+Question: $question
+Triplets: $entity_name $relation $entity_candidates
+Output: """)
+
 
 answer_prompt = """Given a question and the associated retrieved knowledge graph triplets (entity, relation, entity), you are asked to answer the question with these triplets and your knowledge.
 
@@ -95,46 +139,7 @@ Now you need to directly output the results of the following question in JSON fo
 Q: """
 
 
-prune_entity_prompt = """
-Which entities in the following list ([] in Triples) can be used to answer question? Please provide the minimum possible number of entities, strictly following the constraints in the question.
-
-Critical Instructions for Pruning:
-
-1. Remove when clearly impossible:
-   Only REMOVE an entity if it is clearly incompatible with the question based on the text itself
-   (e.g., wrong answer type, wrong time/number, or obviously unrelated meaning).
-
-2. When unsure, keep:
-   If you are not sure whether an entity satisfies the constraints, do NOT delete it just based on a guess.
-   It is better to keep uncertain but possibly relevant entities.
-
-3. Efficiency:
-   You MUST select at most 5 entities in total (including names and IDs).
-   If more than 5 entities look possibly relevant or uncertain, choose up to 5 that best match the question
-   (prefer earlier entities in the list and those sharing important words with the question).
-
-4. All useless case:
-   Only if every entity clearly cannot answer the question, you may output an empty list [].
-
-Here are three examples:
-Q: Which movies directed by Chris Renaud have featured Taylor Swift?
-Triplets: Chris Renaud film.director.film ['The Secret Life of Pets', 'No Time for Nuts', 'Despicable Me', 'The Lorax', 'Despicable Me 2']
-Output: ['The Lorax', 'Despicable Me', 'Despicable Me 2']
-
-Q: The movie featured Miley Cyrus and was produced by Tobin Armbrust?
-Triplets: Tobin Armbrust film.producer.film ['The Resident', 'So Undercover', 'Let Me In', 'Begin Again', 'The Quiet Ones', 'A Walk Among the Tombstones']
-Output: ['So Undercover']
-
-Q: Who served in the 21st Illinois Volunteer Infantry Regiment that also fought in the battle of Vicksburg?
-Triplets: 21st Illinois Volunteer Infantry Regiment military.military_person.participated_in_conflicts ['James B. McPherson', 'William F. Draper', 'Ulysses S. Grant', 'Henry Casey', 'Henry Dow']
-Output: ['Ulysses S. Grant']
-
-Now you need to directly output the entities from [] in Triplets for the following question in list format without other information or notes.
-Q: """
-
-
-
-update_mem_prompt = Template("""Based on the provided information (which may have missing parts and require further retrieval) and your own knowledge, output the currently known information required to achieve the subobjectives.
+update_memory_prompt = Template("""Based on the provided information (which may have missing parts and require further retrieval) and your own knowledge, output the currently known information required to achieve the subobjectives.
 Here is an example:
 Question: Find the person who said "Taste cannot be controlled by law", what did this person die from?
 Subobjectives: ['Search the person who said "Taste cannot be controlled by law"', 'Search the cause of death for that person']
@@ -270,9 +275,8 @@ Output: {
 Now you need to directly output the results of the following question in JSON format with "sufficient", "reason", and "answer" without other information or notes. If the triplets explicitly contains the answer to the question, prioritize the fact of the triplet over memory.
 Question: $question
 Memory: $memory
-Knowledge Triplets:
-$knowledge_triplets
-Output:""")
+Knowledge Triplets: $knowledge_triplets
+Output: """)
 
 
 judge_reflection_prompt = Template("""Based on the current set of entities to be retrieved and the known information including memory and triplets, is it necessary to add additional entities for answering question?
@@ -300,7 +304,7 @@ Question: $question
 Entities set to be retrieved: $entities
 Memory: $memory
 Knowledge Triplets: $knowledge_triplets
-Output:""")
+Output: """)
 
 
 backtrack_entity_prompt = Template("""Please select the fewest necessary entities to be retrieved for answering the Q from Candidate Entities, based on the current known information (Memory), the reason for additional retrieval, and your own knowledge.
@@ -320,7 +324,7 @@ Question: $question
 Reason: $reason
 Candidate Entities: $entity_candidates
 Memory: $memory
-Output:""")
+Output: """)
 
 
 cot_prompt = """Please answer the question according to your knowledge step by step. Here is an example:

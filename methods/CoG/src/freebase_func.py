@@ -164,31 +164,29 @@ def id2entity_name_or_type(entity_id):
 
     return final_name
 
-def select_relations(string, entity_id, head_relations, tail_relations):
-    last_brace_l = string.rfind('[')
-    last_brace_r = string.rfind(']')
-    
-    if last_brace_l < last_brace_r:
-        string = string[last_brace_l:last_brace_r+1]
 
-    relations=[]
-    try:
-        rel_list = eval(string.strip())
-    except:
-        return False, "Eval Error"
+# 从LLM输出中解析选择的关系
+def select_relations(response, entity_id, relation_candidates):
+    selected_ids = parse_selected_ids(response, len(relation_candidates))
 
-    for relation in rel_list:
-        if relation in head_relations:
-            relations.append({"entity": entity_id, "relation": relation, "head": True})
-        elif relation in tail_relations:
-            relations.append({"entity": entity_id, "relation": relation, "head": False})
-    
+    relations = []
+    for candidate_id in selected_ids:
+        candidate = relation_candidates[candidate_id - 1]
+        relations.append({"entity": entity_id, "relation": candidate["relation"], "head": candidate["head"]})
+
     if not relations:
         return False, "No relations found"
     return True, relations
 
-def construct_relation_prune_prompt(question, sub_questions, entity_name, total_relations, args):
-    return extract_relation_prompt + question + '\nSubobjectives: ' + str(sub_questions) + '\nTopic Entity: ' + entity_name + '\nRelations: '+ '; '.join(total_relations)
+
+# 构造关系剪枝提示词
+def construct_relation_prune_prompt(question, sub_questions, entity_name, relation_candidates):
+    numbered_relations = " ".join(
+        f"[{i}] [{'outgoing' if item['head'] else 'incoming'}]{item['relation']}"
+        for i, item in enumerate(relation_candidates, start=1)
+    )
+    return relation_extract_prompt.substitute(question=question, subobjectives=str(sub_questions), entity_name=entity_name, relations=numbered_relations)
+
 
 
 def calculate_entropy(scores):
@@ -220,13 +218,17 @@ def relation_search_prune(entity_id, sub_questions, entity_name, pre_relations, 
     else:
         head_relations = list(set(head_relations) - set(pre_relations))
 
-    head_relations = list(set(head_relations))
-    tail_relations = list(set(tail_relations))
-    total_relations = head_relations + tail_relations
-    total_relations.sort()
+    # 构造带方向的关系候选
+    head_relations = sorted(set(head_relations))
+    tail_relations = sorted(set(tail_relations))
+    relation_candidates = (
+        [{"relation": relation, "head": True} for relation in head_relations] +
+        [{"relation": relation, "head": False} for relation in tail_relations]
+    )
+    relation_candidates.sort(key=lambda item: (item["relation"], not item["head"]))
+    total_relations = [item["relation"] for item in relation_candidates]
     
     token_num = {'total': 0, 'input': 0, 'output': 0, 'calls': 0}
-
     if not total_relations:
         return [], token_num, 0, "EMPTY"
 
@@ -256,10 +258,10 @@ def relation_search_prune(entity_id, sub_questions, entity_name, pre_relations, 
 
         # 若有和引导关系相似度高于设定阈值的候选关系且是离群值（用entropy衡量），则直接返回，结束关系剪枝
         if max_score > 0.88 and entropy < 0.4:
-            hit_rel = total_relations[best_idx]
-            logger.info("[Fast Track] Entropy=%.2f | Spec '%s' -> Hit '%s'", entropy, predicted_relation, hit_rel)
-            is_head = hit_rel in head_relations
-            return [{"entity": entity_id, "relation": hit_rel, "head": is_head}], token_num, 0, "FAST_TRACK" 
+            hit_candidate = relation_candidates[best_idx]
+            logger.info("[Fast Track] Entropy=%.2f | Spec '%s' -> Hit '%s'", entropy, predicted_relation, hit_candidate["relation"])
+            return [{"entity": entity_id, "relation": hit_candidate["relation"], "head": hit_candidate["head"]}], token_num, 0, "FAST_TRACK"
+
 
     # 计算候选关系和原问题的相似度，这里和论文中不一致，论文中说的是计算和子问题的相似度
     if model and total_relations and (cand_embs is not None):
@@ -279,17 +281,18 @@ def relation_search_prune(entity_id, sub_questions, entity_name, pre_relations, 
             score_global = util.cos_sim(global_skeleton_emb, cand_embs)[0].cpu().numpy()
             final_scores += score_global * args.relation_skeleton_weight
 
-        # 对候选关系集合重排序
+        # 对候选关系集合重排序，同时保持关系与方向的映射
         if len(final_scores) > 15:
             logger.info("[Relation Pruning] Too many raltions(%s) remained, start sorting and pruning.", len(final_scores))
             top_k_indices = final_scores.argsort()[::-1][:15]
-            total_relations = [total_relations[i] for i in top_k_indices]
         else:
-            top_k_indices = final_scores.argsort()[::-1] 
-            total_relations = [total_relations[i] for i in top_k_indices]
+            top_k_indices = final_scores.argsort()[::-1]
+        relation_candidates = [relation_candidates[i] for i in top_k_indices]
+        total_relations = [item["relation"] for item in relation_candidates]
+
         
     # 调用LLM再进行一次关系剪枝
-    prompt = construct_relation_prune_prompt(question, sub_questions, entity_name, total_relations, args)
+    prompt = construct_relation_prune_prompt(question, sub_questions, entity_name, relation_candidates)
     token_num['calls'] = 1
     result, llm_tokens = run_llm(prompt, args.temperature_exploration, args.max_length, args.base_url, args.api_key, args.LLM_type)
     for token_type in llm_tokens: 
@@ -297,37 +300,30 @@ def relation_search_prune(entity_id, sub_questions, entity_name, pre_relations, 
             token_num[token_type] += llm_tokens.get(token_type, 0)
 
     # 解析LLM输出
-    flag, retrieve_relations = select_relations(result, entity_id, head_relations, tail_relations) 
+    flag, retrieve_relations = select_relations(result, entity_id, relation_candidates)
     if not flag:
         retrieve_relations = []
 
     used_budget = 0 
+    
+    # LLM关系剪枝结果不足两条时，从蓝图重排序的关系候选中补充
+    if relation_candidates and len(retrieve_relations) < 2 and guard_budget > 0:
+        selected_relations = {(item["relation"], item["head"]) for item in retrieve_relations}
 
-    # LLM关系剪枝结果不足两条时，从根据关系蓝图重排序的候选关系集合中补充
-    if total_relations and len(retrieve_relations) < 2 and guard_budget > 0:
-        selected_rel_names = {item['relation'] for item in retrieve_relations}
-
-        for candidate_relation in total_relations:
+        for candidate in relation_candidates:
             if used_budget >= guard_budget or len(retrieve_relations) >= 2:
                 break
-            if candidate_relation in selected_rel_names:
+
+            relation_key = (candidate["relation"], candidate["head"])
+            if relation_key in selected_relations:
                 continue
-            
-            is_head = candidate_relation in head_relations
-            is_tail = candidate_relation in tail_relations
-            if is_head or is_tail:
-                direction = True if is_head else False
-                retrieve_relations.append({
-                    "entity": entity_id,
-                    "relation": candidate_relation,
-                    "head": direction
-                })
-                selected_rel_names.add(candidate_relation)
-                logger.info("Too few relations chosen by LLM, add realtion: %s", candidate_relation)
-                used_budget += 1
+
+            retrieve_relations.append({"entity": entity_id, "relation": candidate["relation"], "head": candidate["head"]})
+            selected_relations.add(relation_key)
+            logger.info("Too few relations chosen by LLM, add relation: %s", candidate["relation"])
+            used_budget += 1
 
     return retrieve_relations, token_num, used_budget, "SLOW_TRACK"
-
 
 # 实体检索
 def entity_search(entity, relation, head=True):
@@ -422,76 +418,67 @@ def entity_condition_prune(question, entity_relation_entity_dict, entity_id_to_n
     pruned_entity_relation_entity_dict = {}
     non_prunable_relations = ['time', 'number', 'date']
     selected_entity_ids, selected_topic_entity_names, selected_relations, selected_entity_names, selected_heads = [], [], [], [], []
+
     for topic_entity_id, head_tail_dict in sorted(entity_relation_entity_dict.items()):
         for direction, relation_entity_dict in sorted(head_tail_dict.items()):
             for relation, entity_id_list in sorted(relation_entity_dict.items()):
                 if is_all_digits(entity_id_list) or relation in non_prunable_relations or len(entity_id_list) <= 1:
-                    sorted_entity_names = [entity_id_to_name[entity_id] for entity_id in sorted(entity_id_list)]
-                    selected_entity_names_for_relation = sorted_entity_names
+                    selected_entity_ids_for_relation = sorted(entity_id_list)
                 else:
+                    # 无名称实体过多时随机采样
                     if all(entity_id_to_name[item].startswith('m.') or entity_id_to_name[item].startswith('g.') for item in entity_id_list) and len(entity_id_list) > 10:
                         entity_id_list = random.sample(entity_id_list, 10)
 
+                    # Embedding粗排
                     if len(entity_id_list) > 70:
                         sorted_entity_names = [entity_id_to_name[entity_id] for entity_id in entity_id_list]
                         top_entity_names, _ = retrieve_top_docs(question, sorted_entity_names, model, 70)
                         entity_id_list = [entity_name_to_id[entity_name] for entity_name in top_entity_names]
 
-                    prompt = prune_entity_prompt + question +'\nTriples: '
-                    sorted_entity_names = [entity_id_to_name[entity_id] for entity_id in sorted(entity_id_list)]
-                    prompt += entity_id_to_name[topic_entity_id] + ' ' + relation + ' ' + str(sorted_entity_names)
+                    # 候选实体编号
+                    candidate_entity_ids = sorted(entity_id_list)
+                    numbered_entities = " ".join(f"[{i}] {entity_id_to_name[entity_id]}" for i, entity_id in enumerate(candidate_entity_ids, start=1))
+
+                    # 构造提示词
+                    prompt = entity_prune_prompt.substitute(question=question, entity_name=entity_id_to_name[topic_entity_id], relation=relation, entity_candidates=numbered_entities)
+
+                    # 调用LLM
                     call_count += 1
                     llm_response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-                    for token_type in token_num.keys():
+                    for token_type in token_num:
                         token_usage[token_type] += token_num[token_type]
-                    logger.info("Relations: %s | Entities: %s", relation, sorted_entity_names)
 
-                    last_brace_l = llm_response.rfind('[')
-                    last_brace_r = llm_response.rfind(']')
-                    if last_brace_l < last_brace_r:
-                        llm_response = llm_response[last_brace_l:last_brace_r+1]
-                    
-                    try:
-                        llm_response = eval(llm_response.strip())
-                    except:
-                        llm_response = llm_response.strip().strip("[").strip("]").split(', ')
-                        llm_response = [entity_name.strip("'") for entity_name in llm_response]
+                    # JSON解析并通过编号恢复实体ID
+                    selected_ids = parse_selected_ids(llm_response, len(candidate_entity_ids))
+                    selected_entity_ids_for_relation = [candidate_entity_ids[i - 1] for i in selected_ids]
 
-                    selected_entity_names_for_relation = sorted(llm_response)
-                    selected_entity_names_for_relation = [x for x in selected_entity_names_for_relation if x in sorted_entity_names]
-                    logger.info("Selected entities after pruning: %s", selected_entity_names_for_relation)
+                    logger.info("Relations: %s | Entities: %s", relation, numbered_entities)
+                    logger.info("Selected entities after pruning: %s", [entity_id_to_name[entity_id] for entity_id in selected_entity_ids_for_relation])
 
-
-                if len(selected_entity_names_for_relation) == 0 or all(x == '' for x in selected_entity_names_for_relation):
+                if not selected_entity_ids_for_relation:
                     continue
 
-                if topic_entity_id not in pruned_entity_relation_entity_dict.keys():
+                if topic_entity_id not in pruned_entity_relation_entity_dict:
                     pruned_entity_relation_entity_dict[topic_entity_id] = {}
-                if direction not in pruned_entity_relation_entity_dict[topic_entity_id].keys():
+                if direction not in pruned_entity_relation_entity_dict[topic_entity_id]:
                     pruned_entity_relation_entity_dict[topic_entity_id][direction] = {}
-                if relation not in pruned_entity_relation_entity_dict[topic_entity_id][direction].keys():
+                if relation not in pruned_entity_relation_entity_dict[topic_entity_id][direction]:
                     pruned_entity_relation_entity_dict[topic_entity_id][direction][relation] = []
-                
-                for selected_entity_name in selected_entity_names_for_relation:
-                    if selected_entity_name in sorted_entity_names:
-                        pruned_entity_relation_entity_dict[topic_entity_id][direction][relation].append(entity_name_to_id[selected_entity_name])
-                        selected_topic_entity_names.append(entity_id_to_name[topic_entity_id])
-                        selected_relations.append(relation)
-                        selected_entity_names.append(selected_entity_name)
-                        selected_entity_ids.append(entity_name_to_id[selected_entity_name])
-                        if direction == 'head':
-                            selected_heads.append(True)
-                        else:
-                            selected_heads.append(False)
+
+                for selected_entity_id in selected_entity_ids_for_relation:
+                    selected_entity_name = entity_id_to_name[selected_entity_id]
+                    pruned_entity_relation_entity_dict[topic_entity_id][direction][relation].append(selected_entity_id)
+                    selected_topic_entity_names.append(entity_id_to_name[topic_entity_id])
+                    selected_relations.append(relation)
+                    selected_entity_names.append(selected_entity_name)
+                    selected_entity_ids.append(selected_entity_id)
+                    selected_heads.append(direction == 'head')
 
     if len(selected_entity_ids) == 0:
         return False, [], [], [], [], pruned_entity_relation_entity_dict, call_count, token_usage
 
     cluster_chain_of_entities = [[(selected_topic_entity_names[i], selected_relations[i], selected_entity_names[i]) for i in range(len(selected_entity_names))]]
     return True, cluster_chain_of_entities, selected_entity_ids, selected_relations, selected_heads, pruned_entity_relation_entity_dict, call_count, token_usage
-
-
-
 
 
 def restore_backtrack_context(add_ent_list, depth_entities_relations_entities_dict, new_entity_relation_entity_dict, entity_id_to_name, entity_name_to_id, args):
@@ -546,7 +533,7 @@ def update_memory(question, subquestions, ent_rel_ent_dict, entid_name, cluster_
                 sorted_e_list = [entid_name[e_id] for e_id in sorted(entities_list)]
                 chain_prompt += entid_name[topic_entities] + ' ' + relation + ' ' + str(sorted_e_list) + '\n'
 
-    prompt = update_mem_prompt.substitute(question=question, subobjectives=str(subquestions), memory=his_mem, knowledge_triplets=chain_prompt)
+    prompt = update_memory_prompt.substitute(question=question, subobjectives=str(subquestions), memory=his_mem, knowledge_triplets=chain_prompt)
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
     memory_items = parse_json_object(response)
 

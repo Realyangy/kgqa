@@ -388,23 +388,26 @@ def speculate_skeleton_chain(question, topic_entity_names, retriever, args, mode
         
         if len(exemplars) < 2:
             return [], token_num, None, "FAILED"
-
+        
         # 否则取TopK=2个，让LLM参考生成
-        prompt = speculate_prompt.format(
+        prompt = speculate_prompt.substitute(
             q1=exemplars[0]['question'], s1=exemplars[0]['skeleton'],
             q2=exemplars[1]['question'], s2=exemplars[1]['skeleton'],
             question=question
         )
+
         response, token = run_llm(prompt, temperature=0.0, max_tokens=150, base_url=args.base_url, api_key=args.api_key, engine=args.LLM_type)
         for token_type in token:
             if token_type != 'calls':
                 token_num[token_type] += token.get(token_type, 0)
         token_num['calls'] += 1
-
+        
         # 解析模型输出
-        clean_resp = response.strip().split('\n')[0]
-        if "Output:" in clean_resp:
-            clean_resp = clean_resp.split("Output:")[-1].strip()
+        data = parse_json_object(response)
+        clean_resp = data.get("skeleton")
+        if not isinstance(clean_resp, str):
+            raise ValueError("skeleton must be a string")
+        clean_resp = clean_resp.strip()
 
         skeleton = [s.strip() for s in clean_resp.split('->')]
         skeleton = [s for s in skeleton if '[' not in s and len(s) > 1]

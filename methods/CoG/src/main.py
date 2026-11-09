@@ -169,6 +169,7 @@ def process_question(data, args, question_string, model, retriever):
             # 关系扩展失败后，使用当前已有信息生成答案
             if not current_entity_relations_list:
                 logger.info("No approved relations. Fallback to Refinement.")
+                call_num += 1
                 final_json_to_save = generate_final_answer(question, cluster_chain_of_entities, args, all_tokens, best_answer_so_far)
                 final_chain_to_save = cluster_chain_of_entities
                 flag_answered = True
@@ -207,6 +208,7 @@ def process_question(data, args, question_string, model, retriever):
             # 实体扩展失败后，也是根据已有信息回答
             if len(total_candidates) == 0:
                 logger.info("Path pruned to empty (Candidates=0). Fallback to Refinement.")
+                call_num += 1
                 final_json_to_save = generate_final_answer(question, cluster_chain_of_entities, args, all_tokens, best_answer_so_far)
                 final_chain_to_save = cluster_chain_of_entities
                 flag_answered = True
@@ -305,6 +307,7 @@ def process_question(data, args, question_string, model, retriever):
                     # 没有可继续搜索的起点，或已达到最大搜索深度时，根据已有信息回答
                     if not next_topic_entities or depth >= args.depth:
                         logger.info("Forced stop (Max Depth), fallback to Refinement.")
+                        call_num += 1
                         final_json_to_save = generate_final_answer(question, cluster_chain_of_entities, args, all_tokens, best_answer_so_far)
                         final_chain_to_save = cluster_chain_of_entities
                         flag_answered = True
@@ -336,6 +339,7 @@ def process_question(data, args, question_string, model, retriever):
                         # 没有合适的起点实体时，结束迭代，根据已有信息回答
                         if not topic_entities:
                             logger.info("No retrievable topic entities. Fallback to Refinement.")
+                            call_num += 1
                             final_json_to_save = generate_final_answer(question, cluster_chain_of_entities, args, all_tokens, best_answer_so_far)
                             final_chain_to_save = cluster_chain_of_entities
                             flag_answered = True
@@ -348,6 +352,7 @@ def process_question(data, args, question_string, model, retriever):
             # 实体剪枝失败时，根据已有信息回答
             else:
                 logger.info("Path pruned to empty (Entity Pruning). Fallback to Refinement.")
+                call_num += 1
                 final_json_to_save = generate_final_answer(question, cluster_chain_of_entities, args, all_tokens, best_answer_so_far)
                 final_chain_to_save = cluster_chain_of_entities
                 flag_answered = True

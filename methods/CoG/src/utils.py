@@ -30,7 +30,7 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-
     messages = [
         {
             "role": "system",
-            "content": "You are an AI assistant that helps people find information."
+            "content": "You are an AI assistant that helps people find information. Always respond in valid JSON format."
         },
         {
             "role": "user",
@@ -44,30 +44,49 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-
     elif "deepseek" in engine.lower():
         extra_body = {"thinking": {"type": "disabled"}}
 
-    for _ in range(3):
-        try:
-            completion = client.chat.completions.create(
-                model=engine,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                frequency_penalty=0,
-                presence_penalty=0,
-                extra_body=extra_body
-            )
-            result = completion.choices[0].message.content or ""
-            usage = completion.usage
-            token_num = {
-                "total": usage.total_tokens if usage else 0,
-                "input": usage.prompt_tokens if usage else 0,
-                "output": usage.completion_tokens if usage else 0
-            }
-            return result, token_num
-        except Exception as e:
-            logger.info("OpenAI error, retry: %s", e)
-            time.sleep(2)
+    # 调用LLM
+    completion = client.chat.completions.create(
+        model=engine,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        frequency_penalty=0,
+        presence_penalty=0,
+        response_format={"type": "json_object"},
+        extra_body=extra_body
+    )
 
-    raise RuntimeError("Failed to call LLM after 3 retries")
+    choice = completion.choices[0]
+    result = choice.message.content
+
+    # 检查输出截断
+    if choice.finish_reason == "length":
+        raise ValueError("LLM JSON output was truncated")
+
+    # 检查空输出
+    if not result or not result.strip():
+        raise ValueError("LLM returned empty JSON")
+
+    # 验证JSON格式
+    try:
+        data = json.loads(result)
+    except json.JSONDecodeError as error:
+        raise ValueError("LLM returned invalid JSON") from error
+
+    if not isinstance(data, dict):
+        raise ValueError("LLM JSON output must be an object")
+
+    # 统计Token
+    if completion.usage is None:
+        raise ValueError("LLM response is missing token usage")
+    token_num = {
+        "total": completion.usage.total_tokens,
+        "input": completion.usage.prompt_tokens,
+        "output": completion.usage.completion_tokens
+    }
+
+    return result, token_num
+
 
 def convert_dict_name(ent_rel_ent_dict, entid_name):
     name_dict = {}

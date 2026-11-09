@@ -541,9 +541,12 @@ def reasoning(question, subquestions, ent_rel_ent_dict, entid_name, cluster_chai
     return response, answer, sufficient, token_num
 
 
+# 根据已有KG证据和LLM内部知识生成最终答案
 def generate_final_answer(question, cluster_chain_of_entities, args, all_t, best_answer_so_far="Null"):
     logger.info("[Refinement] Graph search incomplete. Translating IDs and Bridging...")
+
     try:
+        # 构造KG路径，并尝试将Freebase ID转换为实体名称
         path_str = ""
         if cluster_chain_of_entities:
             for depth_chains in cluster_chain_of_entities:
@@ -555,61 +558,70 @@ def generate_final_answer(question, cluster_chain_of_entities, args, all_t, best
                             if h_show.startswith('m.'):
                                 try:
                                     name = id2entity_name_or_type(h_raw)
-                                    if name != h_raw: 
-                                        h_show = f"{name} ({h_raw})" 
-                                except: pass
+                                    if name != h_raw:
+                                        h_show = f"{name} ({h_raw})"
+                                except Exception:
+                                    pass
 
                             t_show = str(t_raw)
                             if t_show.startswith('m.'):
                                 try:
                                     name = id2entity_name_or_type(t_raw)
-                                    if name != t_raw: 
+                                    if name != t_raw:
                                         t_show = f"{name} ({t_raw})"
-                                except: pass
-                            
+                                except Exception:
+                                    pass
+
                             path_str += f"{h_show} -> {r} -> {t_show}\n"
                         else:
                             path_str += str(chain) + "\n"
-        
-        if not path_str.strip(): 
+
+        if not path_str.strip():
             path_str = "No valid paths retrieved."
 
-        guess, t_tok = run_llm(answer_prompt, 0.0, 50, args.base_url, args.api_key, args.LLM_type)
-        for k in t_tok: all_t[k] += t_tok[k]
-        
+        prompt = answer_prompt.substitute(question=question, graph_evidence=path_str[:3500])
+        response, t_tok = run_llm(prompt, 0.0, 150, args.base_url, args.api_key, args.LLM_type)
+        for token_type in t_tok:
+            all_t[token_type] += t_tok[token_type]
 
-        guess_ans = guess.replace("Answer:", "").strip().strip('"').strip("'").strip(".").split('\n')[0]
+        # 解析JSON答案
+        data = parse_json_object(response)
+        if "answer" not in data:
+            raise ValueError("Missing answer field")
+
+        guess_ans = data["answer"]
+        if guess_ans is not None and not isinstance(guess_ans, str):
+            raise ValueError("answer must be a string or null")
+
+        guess_ans = guess_ans.strip().strip(".").split("\n")[0] if guess_ans is not None else ""
         logger.info("[Refinement] LLM Output: %s", guess_ans)
 
-        final_ans = "Null"
-        is_verified = False
-
+        # 保留原来的无效答案检查和历史答案回退
+        final_ans = None
         invalid_keywords = ["null", "unknown", "i don't know", "no answer"]
+
         if not guess_ans or any(k in guess_ans.lower() for k in invalid_keywords):
             if best_answer_so_far not in ["Null", None]:
                 final_ans = best_answer_so_far
         else:
             final_ans = guess_ans
+
+            # 保留原来的实体名称或别名检查
+            is_verified = False
             if not (guess_ans.isdigit() or re.match(r'^\d{4}-\d{2}-\d{2}$', guess_ans)):
-                 check_sparql = f"""PREFIX ns: <http://rdf.freebase.com/ns/> SELECT ?mid WHERE {{ {{ ?entity ns:type.object.name "{guess_ans}"@en . }} UNION {{ ?entity ns:common.topic.alias "{guess_ans}"@en . }} }} LIMIT 1"""
-                 try:
-                     if execurte_sparql(check_sparql): is_verified = True
-                 except: pass
+                check_sparql = f"""PREFIX ns: <http://rdf.freebase.com/ns/> SELECT ?mid WHERE {{ {{ ?entity ns:type.object.name "{guess_ans}"@en . }} UNION {{ ?entity ns:common.topic.alias "{guess_ans}"@en . }} }} LIMIT 1"""
+                try:
+                    if execurte_sparql(check_sparql):
+                        is_verified = True
+                except Exception:
+                    pass
 
+            logger.info("[Refinement] Entity name verified: %s", is_verified)
 
-        is_sufficient = "Yes" if (final_ans and "null" not in final_ans.lower()) else "No"
-        
-        final_result_dict = {
-            "A": {"Sufficient": is_sufficient, "Answer": final_ans},
-            "R": f"Refined answer with ID decoding: {final_ans}"
-        }
+        # 返回统一JSON格式
+        return json.dumps({"answer": final_ans}, ensure_ascii=False)
 
+    except Exception:
+        logger.exception("[Refinement Critical Error]")
+        return json.dumps({"answer": None}, ensure_ascii=False)
 
-        return json.dumps(final_result_dict, indent=2, ensure_ascii=False)
-
-    except Exception as e:
-        logger.info("[Refinement Critical Error] %s", e)
-
-        err_dict = {"A": {"Sufficient": "No", "Answer": "Null"}, "R": f"Error: {str(e)}"}
-        return json.dumps(err_dict, indent=2, ensure_ascii=False)
-    

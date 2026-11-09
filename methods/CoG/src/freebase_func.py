@@ -580,9 +580,9 @@ def generate_final_answer(question, cluster_chain_of_entities, args, all_t, best
             path_str = "No valid paths retrieved."
 
         prompt = answer_prompt.substitute(question=question, graph_evidence=path_str[:3500])
-        response, t_tok = run_llm(prompt, 0.0, 150, args.base_url, args.api_key, args.LLM_type)
-        for token_type in t_tok:
-            all_t[token_type] += t_tok[token_type]
+        response, tokens = run_llm(prompt, 0.0, 150, args.base_url, args.api_key, args.LLM_type)
+        for token_type in tokens:
+            all_t[token_type] += tokens[token_type]
 
         # 解析JSON答案
         data = parse_json_object(response)
@@ -609,7 +609,19 @@ def generate_final_answer(question, cluster_chain_of_entities, args, all_t, best
             # 保留原来的实体名称或别名检查
             is_verified = False
             if not (guess_ans.isdigit() or re.match(r'^\d{4}-\d{2}-\d{2}$', guess_ans)):
-                check_sparql = f"""PREFIX ns: <http://rdf.freebase.com/ns/> SELECT ?mid WHERE {{ {{ ?entity ns:type.object.name "{guess_ans}"@en . }} UNION {{ ?entity ns:common.topic.alias "{guess_ans}"@en . }} }} LIMIT 1"""
+                check_sparql = f"""PREFIX ns: <http://rdf.freebase.com/ns/>
+                    SELECT ?mid
+                    WHERE {{
+                        {{
+                            ?entity ns:type.object.name "{guess_ans}"@en .
+                        }}
+                        UNION
+                        {{
+                            ?entity ns:common.topic.alias "{guess_ans}"@en .
+                        }}
+                    }}
+                    LIMIT 1
+                """
                 try:
                     if execurte_sparql(check_sparql):
                         is_verified = True
@@ -622,6 +634,6 @@ def generate_final_answer(question, cluster_chain_of_entities, args, all_t, best
         return json.dumps({"answer": final_ans}, ensure_ascii=False)
 
     except Exception:
-        logger.exception("[Refinement Critical Error]")
-        return json.dumps({"answer": None}, ensure_ascii=False)
+        logger.exception("[Final Answer Error]")
+        raise
 

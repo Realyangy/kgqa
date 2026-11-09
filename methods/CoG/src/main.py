@@ -113,10 +113,11 @@ def process_question(data, args, question_string, model, retriever):
         for entity_info in topic_entities:
             entity_id_to_name[entity_info['entity_id']] = entity_info['entity_name']
             entity_name_to_id[entity_info['entity_name']] = entity_info['entity_id']
-
+        
         # 没有起点实体的情况
         if len(topic_entities) == 0:
             logger.warning("No topic entity. Falling back to refinement.")
+            call_num += 1
             refined_answer = generate_final_answer(question, [], args, all_tokens)
             save_2_jsonl(question, question_string, refined_answer, [], call_num, all_tokens, start_time, output_file=args.output_file)
             return local_stats

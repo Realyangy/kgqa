@@ -17,25 +17,6 @@ from freebase_func import *
 from logging_utils import initialize_logger, logger
 
 
-MODELS_DICT = {
-    "Qwen3.5-27b-AWQ-4bit": {
-        "model_path": "/home/flyvideo/Sata2/Models/LLM/Qwen3.5-27B-AWQ-4bit",
-        "base_url": "http://localhost:8001/v1",
-        "api_key": "EMPTY",
-    },
-    "DeepSeekV4.1-Flash": {
-        "model_path": "deepseek-flash",
-        "base_url": "https://api.deepseek.com/v1",
-        "api_key": os.getenv("LYY_DEEPSEEK_API_KEY"),
-    },
-    "GPT-4o-Mini": {
-        "model_path": "openai/gpt-4o-mini",
-        "base_url": "https://router.shengsuanyun.com/api/v1",
-        "api_key": os.getenv("LYY_SHENGSUANYUN_API_KEY"),
-    },
-}
-
-
 # 用于断点续跑，若已有结果文件，会跳过其中的样本
 def repeat_unanswer(datas, question_string, output_file):
     answered_set = set()
@@ -171,7 +152,6 @@ def process_question(data, args, question_string, model, retriever):
                 if entity != "[FINISH_ID]":
 
                     # 关系扩展
-                    call_num += 1
                     retrieve_relations, token_num, used_count, track_type = relation_search_prune(entity, sub_questions,  entity_info['entity_name'], entity_info['pre_relations'], entity_info['pre_head'], question,  args, model=model,  predicted_relation=current_pred_rel, global_skeleton_emb=global_skeleton_emb, speculation_list=skeleton_chain, guard_budget=layer_guard_budget)
                     local_stats[track_type] += 1
                     local_stats['total_steps'] += 1
@@ -422,12 +402,31 @@ def disable_net_proxy():
         os.environ.pop(var, None)
 
 
+MODELS_DICT = {
+    "Qwen3.5-27b-AWQ-4bit": {
+        "model_path": "/home/flyvideo/Sata2/Models/LLM/Qwen3.5-27B-AWQ-4bit",
+        "base_url": "http://localhost:8001/v1",
+        "api_key": "EMPTY",
+    },
+    "DeepSeekV4.1-Flash": {
+        "model_path": "deepseek-flash",
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key": os.getenv("LYY_DEEPSEEK_API_KEY"),
+    },
+    "GPT-4o-Mini": {
+        "model_path": "openai/gpt-4o-mini",
+        "base_url": "https://router.shengsuanyun.com/api/v1",
+        "api_key": os.getenv("LYY_SHENGSUANYUN_API_KEY"),
+    },
+}
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
     parser.add_argument("--dataset_sample_num", type=int, default=500, help="Number of examples; omit to run the full dataset.")
     parser.add_argument("--dataset_sample_seed", type=int, default=42)
-    parser.add_argument("--model_name", type=str, default="GPT-4o-Mini", choices=MODELS_DICT.keys())
+    parser.add_argument("--model_name", type=str, default="Qwen3.5-27b-AWQ-4bit", choices=MODELS_DICT.keys())
     parser.add_argument("--max_length", type=int, default=4096, help="the max length of LLMs output.")
     parser.add_argument("--temperature_exploration", type=float, default=0.3, help="the temperature in exploration stage.")
     parser.add_argument("--temperature_reasoning", type=float, default=0.3, help="the temperature in reasoning stage.")

@@ -399,7 +399,7 @@ def speculate_skeleton_chain(question, topic_entity_names, retriever, args, mode
         for token_type in token:
             if token_type != 'calls':
                 token_num[token_type] += token.get(token_type, 0)
-        token_num['calls'] += token.get('calls', 0)
+        token_num['calls'] += 1
 
         # 解析模型输出
         clean_resp = response.strip().split('\n')[0]

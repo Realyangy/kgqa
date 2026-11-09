@@ -191,13 +191,6 @@ def extract_add_and_reason(response):
     return add, reason
 
 
-def generate_without_explored_paths(question, subquestions, args):
-    prompt = cot_prompt + question 
-    response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    return response, token_num
-
-
-
 def break_question(question, args):
     prompt = subobjective_prompt.substitute(question=question)
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)

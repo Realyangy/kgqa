@@ -372,30 +372,6 @@ def update_history(entity_candidates, ent_rel, entity_candidates_id, total_candi
     return total_candidates, total_relations, total_entities_id, total_topic_entities, total_head
 
 
-def half_stop(question, question_string, subquestions, cluster_chain_of_entities, depth, call_num, all_t, start_time, args):
-    logger.info("No new knowledge added during search depth %d, stop searching.", depth)
-    call_num += 1
-    
-
-    if not cluster_chain_of_entities or not cluster_chain_of_entities[0]:
-        logger.info("...Knowledge chains are empty. SWITCHING TO CoT FALLBACK.")
-        answer, token_num = generate_without_explored_paths(question, subquestions, args)
-    else:
-        logger.info("...Using existing knowledge to generate answer.")
-        answer, token_num = generate_answer(question, subquestions, cluster_chain_of_entities, args)
-
-    for kk in token_num.keys():
-        all_t[kk] += token_num[kk]
-
-    save_2_jsonl(question, question_string, answer, cluster_chain_of_entities, call_num, all_t, start_time, output_file=args.output_file)
-
-def generate_answer(question, subquestions, cluster_chain_of_entities, args): 
-    prompt = answer_prompt + question 
-    chain_prompt = '\n'.join([', '.join([str(x) for x in chain]) for sublist in cluster_chain_of_entities for chain in sublist])
-    prompt += "\nKnowledge Triplets: " + chain_prompt
-    result, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    return result, token_num
-
 def if_topic_non_retrieve(string):
     try:
         float(string)
@@ -598,27 +574,7 @@ def perform_refinement(question, cluster_chain_of_entities, args, all_t, best_an
         if not path_str.strip(): 
             path_str = "No valid paths retrieved."
 
-
-        final_prompt = f"""
-        Question: "{question}"
-        The Knowledge Graph search was incomplete. 
-        
-        [Graph Evidence]:
-        {path_str[:3500]} 
-        
-        Based on the [Graph Evidence] and your INTERNAL KNOWLEDGE, provide the final answer.
-        
-        Constraints:
-        1. If the answer appears in [Graph Evidence] as an ID (e.g., m.01234), Do NOT output Freebase IDs (starting with 'm.' or 'g.'), you MUST translate it to its real Name using your internal knowledge. Never output raw IDs.
-        2. Even if the relationship doesn't perfectly match (e.g. "directed" vs "acted"), if there is a strong candidate entity in the path, OUTPUT IT.
-        3. Do NOT output refusal phrases such as "did not", "no record", "unknown", "no information", "null", "none", or any similar negative expressions. Do NOT output full sentences explaining why the answer is missing. 
-        4. You MUST provide a best-guess answer. Prioritize entities found in the [Graph Evidence], but if the evidence is missing or incomplete, YOU MUST USE YOUR INTERNAL KNOWLEDGE to answer the question directly.
-        5. [Format & Logic] Output the final answer string. It could be an Entity Name, a Date, or a Number.Do NOT output JSON. Do NOT explain. Just output the answer string.
-        6. Strictly follow any constraints in the question.
-
-        Answer:"""
-
-        guess, t_tok = run_llm(final_prompt, 0.0, 50, args.base_url, args.api_key, args.LLM_type)
+        guess, t_tok = run_llm(answer_prompt, 0.0, 50, args.base_url, args.api_key, args.LLM_type)
         for k in t_tok: all_t[k] += t_tok[k]
         
 

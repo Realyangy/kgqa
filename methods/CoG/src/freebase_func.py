@@ -67,6 +67,20 @@ WHERE {
 ORDER BY ASC(?priority)
 LIMIT 1"""
 
+# 检查实体名称或别名是否存在
+sparql_check_entity_name = """PREFIX ns: <http://rdf.freebase.com/ns/>
+SELECT DISTINCT ?entity
+WHERE {
+    {
+        ?entity ns:type.object.name %s .
+    }
+    UNION
+    {
+        ?entity ns:common.topic.alias %s .
+    }
+}
+LIMIT 1"""
+
 def abandon_rels(relation):
     if (
         relation == "type.object.type"
@@ -606,27 +620,12 @@ def generate_final_answer(question, cluster_chain_of_entities, args, all_t, best
         else:
             final_ans = guess_ans
 
-            # 保留原来的实体名称或别名检查
+            # 检查答案是否存在于Freebase实体名称或别名中
             is_verified = False
             if not (guess_ans.isdigit() or re.match(r'^\d{4}-\d{2}-\d{2}$', guess_ans)):
-                check_sparql = f"""PREFIX ns: <http://rdf.freebase.com/ns/>
-                    SELECT ?mid
-                    WHERE {{
-                        {{
-                            ?entity ns:type.object.name "{guess_ans}"@en .
-                        }}
-                        UNION
-                        {{
-                            ?entity ns:common.topic.alias "{guess_ans}"@en .
-                        }}
-                    }}
-                    LIMIT 1
-                """
-                try:
-                    if execurte_sparql(check_sparql):
-                        is_verified = True
-                except Exception:
-                    pass
+                name_literal = json.dumps(guess_ans, ensure_ascii=False) + "@en"
+                check_sparql = sparql_check_entity_name % (name_literal, name_literal)
+                is_verified = bool(execurte_sparql(check_sparql))
 
             logger.info("[Refinement] Entity name verified: %s", is_verified)
 

@@ -198,14 +198,17 @@ def generate_without_explored_paths(question, subquestions, args):
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
     return response, token_num
 
-def break_question(question, args): 
-    prompt = subobjective_prompt + question
+def break_question(question, args):
+    prompt = subobjective_prompt.substitute(question=question)
     response, token_num = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
-    first_brace_p = response.find('[')
-    last_brace_p = response.rfind(']')
-    if first_brace_p != -1 and last_brace_p != -1:
-        response = response[first_brace_p:last_brace_p+1]
-    return response, token_num
+    data = parse_json_object(response)
+    sub_questions = data.get("subobjectives")
+    if not isinstance(sub_questions, list):
+        raise ValueError("subobjectives must be a list")
+    if not all(isinstance(item, str) for item in sub_questions):
+        raise ValueError("Each subobjective must be a string")
+    return sub_questions, token_num
+
 
 def get_subquestions(q_mem_f_path, question, args):
     sub_questions, token_num = break_question(question, args)

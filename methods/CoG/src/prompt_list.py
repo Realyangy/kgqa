@@ -273,6 +273,7 @@ Candidate Entities: $entity_candidates
 Memory: $memory
 Output: """)
 
+
 answer_prompt = """Question: "{question}"
 The Knowledge Graph search was incomplete. 
 [Graph Evidence]: {path_str[:3500]} 
@@ -287,6 +288,21 @@ Constraints:
 6. Strictly follow any constraints in the question.
 
 Answer:"""
+
+
+answer_prompt = Template("""The Knowledge Graph search was incomplete. Based on the Graph Evidence and your INTERNAL KNOWLEDGE, provide the final answer.
+Question: "$question"
+Graph Evidence: $graph_evidence
+
+Constraints:
+1. If the answer appears in [Graph Evidence] as an ID (e.g., m.01234), Do NOT output Freebase IDs (starting with 'm.' or 'g.'), you MUST translate it to its real Name using your internal knowledge. Never output raw IDs.
+2. Even if the relationship doesn't perfectly match (e.g. "directed" vs "acted"), if there is a strong candidate entity in the path, OUTPUT IT.
+3. Do NOT output refusal phrases such as "did not", "no record", "unknown", "no information", "null", "none", or any similar negative expressions. Do NOT output full sentences explaining why the answer is missing.
+4. You MUST provide a best-guess answer. Prioritize entities found in the [Graph Evidence], but if the evidence is missing or incomplete, YOU MUST USE YOUR INTERNAL KNOWLEDGE to answer the question directly.
+5. [Format & Logic] Output the final answer in JSON format using the "answer" field. Its value must be a string, which could be an Entity Name, a Date, or a Number. Do NOT explain.
+6. Strictly follow any constraints in the question.
+
+Output: """)
 
 
 

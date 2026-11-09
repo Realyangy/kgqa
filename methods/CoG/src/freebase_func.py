@@ -541,7 +541,7 @@ def reasoning(question, subquestions, ent_rel_ent_dict, entid_name, cluster_chai
     return response, answer, sufficient, token_num
 
 
-def perform_refinement(question, cluster_chain_of_entities, args, all_t, best_answer_so_far="Null"):
+def generate_final_answer(question, cluster_chain_of_entities, args, all_t, best_answer_so_far="Null"):
     logger.info("[Refinement] Graph search incomplete. Translating IDs and Bridging...")
     try:
         path_str = ""

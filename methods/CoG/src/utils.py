@@ -116,6 +116,43 @@ def save_2_jsonl(question, question_string, answer, cluster_chain_of_entities, c
         outfile.write(json_str + "\n")
 
 
+# 保存失败样本
+def save_error_result(question, question_string, output_file):
+    error_result = {
+        question_string: question,
+        "results": "error",
+        "reasoning_chains": None,
+        "call_num": 0,
+        "total_token": 0,
+        "input_token": 0,
+        "output_token": 0,
+        "time": 0,
+    }
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with open(output_file, "a", encoding="utf-8") as outfile:
+        outfile.write(json.dumps(error_result, ensure_ascii=False) + "\n")
+
+
+# 读取已有结果；同一问题有多条记录时，以最后一条为准
+def load_previous_results(output_file, question_string):
+    previous_results = {}
+    if not os.path.exists(output_file):
+        return previous_results
+
+    with open(output_file, "r", encoding="utf-8") as infile:
+        for line in infile:
+            try:
+                result = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            question = result.get(question_string)
+            if question is not None:
+                previous_results[question] = result
+
+    return previous_results
+
+
 # 解析LLM输出的JSON对象
 def parse_json_object(response):
     if not isinstance(response, str):

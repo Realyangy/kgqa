@@ -19,22 +19,18 @@ from logging_utils import initialize_logger, logger
 
 # 用于断点续跑，若已有结果文件，会跳过其中的样本
 def repeat_unanswer(datas, question_string, output_file):
-    answered_set = set()
-    file_path = output_file
-    if not os.path.exists(file_path):
-        return datas
-    
-    with open(file_path, 'r', encoding='utf-8') as file:
-        for line in file:
-            try:
-                data = json.loads(line)
-                if question_string in data:
-                    answered_set.add(data[question_string])
-            except Exception:
-                continue
+    previous_results = load_previous_results(output_file, question_string)
+    remaining_datas = []
 
-    new_data = [x for x in datas if x[question_string] not in answered_set]
-    return new_data
+    for data in datas:
+        question = data[question_string]
+        previous_result = previous_results.get(question)
+
+        # 没有结果，或者上一次处理失败，都需要继续处理
+        if previous_result is None or previous_result.get("results") == "error":
+            remaining_datas.append(data)
+
+    return remaining_datas
 
 
 # 根据问题查找对应样本
@@ -47,6 +43,7 @@ def get_one_data(datas, question_string, question):
 # CoG单题处理流程
 def process_question(data, args, question_string, model, retriever):
     local_stats = Counter()
+    question = data[question_string]
     try:
         start_time = time.time()
         call_num = 0
@@ -56,7 +53,6 @@ def process_question(data, args, question_string, model, retriever):
         final_json_to_save = None
         final_chain_to_save = []
 
-        question = data[question_string]
         logger.info("\nCurrent Question：%s", question)
         safe_question_name = re.sub(r'[^\w\-. ]+', '_', question)[:200]
         memory_path = str(Path(args.output_dir) / "memory" / args.dataset / args.model_name.lower() / safe_question_name)
@@ -396,9 +392,11 @@ def process_question(data, args, question_string, model, retriever):
             save_2_jsonl(question, question_string, final_json_to_save, final_chain_to_save, call_num, all_tokens, start_time, output_file=args.output_file)
         else:
             logger.info("[Error] No result generated for: %s", question)
+            save_error_result(question, question_string, args.output_file)
 
     except Exception:
         logger.exception("Error on question=%s", question)
+        save_error_result(question, question_string, args.output_file)
 
     return local_stats
 
@@ -432,7 +430,7 @@ if __name__ == '__main__':
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
     parser.add_argument("--dataset_sample_num", type=int, default=500, help="Number of examples; omit to run the full dataset.")
     parser.add_argument("--dataset_sample_seed", type=int, default=42)
-    parser.add_argument("--model_name", type=str, default="Qwen3.5-27b-AWQ-4bit", choices=MODELS_DICT.keys())
+    parser.add_argument("--model_name", type=str, default="DeepSeekV4.1-Flash", choices=MODELS_DICT.keys())
     parser.add_argument("--max_length", type=int, default=4096, help="the max length of LLMs output.")
     parser.add_argument("--temperature_exploration", type=float, default=0.3, help="the temperature in exploration stage.")
     parser.add_argument("--temperature_reasoning", type=float, default=0.3, help="the temperature in reasoning stage.")

@@ -51,7 +51,7 @@ def extract_predictions(value):
 
 
 # 输出评估结果
-def print_evaluation_table(num_right, num_error, total, call_num_list, time_list, token_num_list):
+def print_evaluation_table(num_right, num_error, num_failed, total, call_num_list, time_list, token_num_list):
     def average(values):
         return f"{np.mean(values):,.2f}" if values else "N/A"
     accuracy = f"{num_right / total:.2%}" if total else "N/A"
@@ -63,8 +63,9 @@ def print_evaluation_table(num_right, num_error, total, call_num_list, time_list
             ("Accuracy", accuracy),
             ("Correct", str(num_right)),
             ("Incorrect", str(num_error)),
+            ("Failed sample(s)", str(num_failed)),
         ]),
-        ("Computational Cost", [
+        (f"Computational Cost", [
             ("Avg.LLM Calls", average(call_num_list)),
             ("Avg.Input Tokens", average(token_num_list["input"])),
             ("Avg.Output Tokens", average(token_num_list["output"])),
@@ -112,6 +113,7 @@ if __name__ == '__main__':
 
     num_right = 0
     num_error = 0
+    num_failed = 0
     error_question = []
 
     type_field = ''
@@ -163,6 +165,12 @@ if __name__ == '__main__':
         if part_q and data[question_string] not in q_set:
             continue
 
+        # 执行失败的样本单独统计，不参与答案匹配和平均计算开销
+        if data.get("results") == "error":
+            num_failed += 1
+            error_question.append(data[question_string])
+            continue
+
         answers, ori_data = align(args.dataset, question_string, data, ground_truth_datas, aname_dict, alias_dict, add_ans_alias_dict)
 
         if 'time' in data.keys():
@@ -197,9 +205,10 @@ if __name__ == '__main__':
     print_evaluation_table(
         num_right=num_right,
         num_error=num_error,
-        total=len(output_datas),
+        num_failed=num_failed,
+        total=num_right + num_error + num_failed,
         call_num_list=call_num_list,
         time_list=time_list,
-        token_num_list=token_num_list,
-    )
+        token_num_list=token_num_list
+)
 

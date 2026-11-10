@@ -44,10 +44,11 @@ def get_one_data(datas, question_string, question):
 def process_question(data, args, question_string, model, retriever):
     local_stats = Counter()
     question = data[question_string]
+    start_time = time.time()
+    call_num = 0
+    all_tokens = {'total': 0, 'input': 0, 'output': 0}
+
     try:
-        start_time = time.time()
-        call_num = 0
-        all_tokens = {'total': 0, 'input': 0, 'output': 0}
         best_answer_so_far = "null" 
         
         final_json_to_save = None
@@ -392,11 +393,11 @@ def process_question(data, args, question_string, model, retriever):
             save_2_jsonl(question, question_string, final_json_to_save, final_chain_to_save, call_num, all_tokens, start_time, output_file=args.output_file)
         else:
             logger.info("[Error] No result generated for: %s", question)
-            save_error_result(question, question_string, args.output_file)
+            save_error_result(question, question_string, args.output_file, call_num, all_tokens, start_time)
 
     except Exception:
         logger.exception("Error on question=%s", question)
-        save_error_result(question, question_string, args.output_file)
+        save_error_result(question, question_string, args.output_file, call_num, all_tokens, start_time)
 
     return local_stats
 

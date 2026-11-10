@@ -116,21 +116,23 @@ def save_2_jsonl(question, question_string, answer, cluster_chain_of_entities, c
         outfile.write(json_str + "\n")
 
 
-# 保存失败样本
-def save_error_result(question, question_string, output_file):
+# 保存失败样本及失败前已产生的计算开销
+def save_error_result(question, question_string, output_file, call_num, all_tokens, start_time):
     error_result = {
         question_string: question,
         "results": "error",
         "reasoning_chains": None,
-        "call_num": 0,
-        "total_token": 0,
-        "input_token": 0,
-        "output_token": 0,
-        "time": 0,
+        "call_num": call_num,
+        "total_token": all_tokens["total"],
+        "input_token": all_tokens["input"],
+        "output_token": all_tokens["output"],
+        "time": time.time() - start_time
     }
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+    os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as outfile:
         outfile.write(json.dumps(error_result, ensure_ascii=False) + "\n")
+
 
 
 # 读取已有结果；同一问题有多条记录时，以最后一条为准
@@ -351,7 +353,7 @@ def reflection(question, selected_entity_ids, depth_entities_relations_entities_
             selected_ids = parse_selected_ids(response, len(other_entities))
             reflection_entity_list = sorted(other_entities[i - 1] for i in selected_ids)
             if reflection_entity_list:
-                logger.info("add reverse ent: %d %s", len(reflection_entity_list), [entity_id_to_name[entity_id] for entity_id in reflection_entity_list])
+                logger.info("Added reverse entities: %d %s", len(reflection_entity_list), [entity_id_to_name[entity_id] for entity_id in reflection_entity_list])
                 return remaining_entity_ids, reflection_entity_list, cur_call_time, cur_token
 
     return remaining_entity_ids, [], cur_call_time, cur_token

@@ -33,11 +33,11 @@ def disable_net_proxy():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
-    parser.add_argument("--prompt_methods", type=str, default="cot", choices=["cot", "io"], help="Prompting method.")
+    parser.add_argument("--prompt_methods", type=str, default="cot", choices=["cot", "io"], help="Prompting method.")    
+    parser.add_argument("--model_name", type=str, default="GPT-4o-Mini", choices=MODELS_DICT.keys(), help="Model configuration name defined in MODELS_DICT.")
     parser.add_argument("--max_length", type=int, default=256, help="the max length of LLMs output.")
     parser.add_argument("--temperature", type=float, default=0, help="Generation temperature.")
-    parser.add_argument("--model_name", type=str, default="GPT-4o-Mini", choices=MODELS_DICT.keys(), help="Model configuration name defined in MODELS_DICT.")
+    parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
     parser.add_argument("--output_dir", type=str, default="../output", help="Directory for saving logs and results, relative to methods/CoT/src.")
     args = parser.parse_args()
 

@@ -165,20 +165,21 @@ if __name__ == '__main__':
         if part_q and data[question_string] not in q_set:
             continue
 
-        # 执行失败的样本单独统计，不参与答案匹配和平均计算开销
+        # 统计计算开销，包括执行失败的样本
+        if 'time' in data:
+            call_num_list.append(data['call_num'])
+            time_list.append(data['time'])
+            token_num_list['input'].append(data['input_token'])
+            token_num_list['output'].append(data['output_token'])
+            token_num_list['total'].append(data['total_token'])
+
+        # 执行失败的样本单独统计，不参与答案匹配
         if data.get("results") == "error":
             num_failed += 1
             error_question.append(data[question_string])
             continue
 
         answers, ori_data = align(args.dataset, question_string, data, ground_truth_datas, aname_dict, alias_dict, add_ans_alias_dict)
-
-        if 'time' in data.keys():
-            call_num_list.append(data['call_num'])
-            time_list.append(data['time'])
-            token_num_list['input'].append(data['input_token'])
-            token_num_list['output'].append(data['output_token'])
-            token_num_list['total'].append(data['total_token'])
 
         if type_field:
             if ori_data[type_field] not in count_q.keys():

@@ -41,6 +41,38 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-
     return content, token_num
 
 
+# 解析LLM的JSON输出
+def parse_answer_json(response, method):
+    if not isinstance(response, str):
+        raise ValueError("LLM response is not a string")
+
+    try:
+        data = json.loads(response.strip())
+    except json.JSONDecodeError as error:
+        raise ValueError("Invalid answer JSON") from error
+
+    if not isinstance(data, dict):
+        raise ValueError("JSON response must be an object")
+
+    # 验证最终答案
+    if "answer" not in data:
+        raise ValueError("Missing answer field")
+
+    answer = data["answer"]
+    if answer is not None and not isinstance(answer, str):
+        raise ValueError("answer must be a string or null")
+
+    # CoT需要额外解析推理过程
+    reason = None
+    if method == "cot":
+        reason = data.get("reason")
+        if not isinstance(reason, str):
+            raise ValueError("reason must be a string")
+
+    return answer.strip() if answer is not None else None, reason
+
+
+
 
 def prepare_dataset(dataset_name):
     if dataset_name == 'cwq':

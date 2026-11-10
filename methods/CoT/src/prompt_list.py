@@ -1,39 +1,70 @@
-io_prompt = """Q: What state is home to the university that is represented in sports by George Washington Colonials men's basketball?
-A: {Washington, D.C.}.
+from string import Template
+
+io_prompt = Template("""Answer the question directly and return the answer in JSON format using the "answer" field.
+Here are six examples:
+Q: What state is home to the university that is represented in sports by George Washington Colonials men's basketball?
+A: {"answer": "Washington, D.C."}
 
 Q: Who lists Pramatha Chaudhuri as an influence and wrote Jana Gana Mana?
-A: {Bharoto Bhagyo Bidhata}.
+A: {"answer": "Bharoto Bhagyo Bidhata"}
 
 Q: Who was the artist nominated for an award for You Drive Me Crazy?
-A: {Britney Spears}.
+A: {"answer": "Britney Spears"}
 
 Q: What person born in Siegen influenced the work of Vincent Van Gogh?
-A: {Peter Paul Rubens}.
+A: {"answer": "Peter Paul Rubens"}
 
 Q: What is the country close to Russia where Mikheil Saakashvii holds a government position?
-A: {Georgia}.
+A: {"answer": "Georgia"}
 
 Q: What drug did the actor who portrayed the character Urethane Wheels Guy overdosed on?
-A: {Heroin}."""
+A: {"answer": "Heroin"}
+
+Now directly output the answer to the following question in JSON format using the "answer" field without other information or notes.
+Q: $question
+A: """)
 
 
-cot_prompt = """Q: What state is home to the university that is represented in sports by George Washington Colonials men's basketball?
-A: First, the education institution has a sports team named George Washington Colonials men's basketball in is George Washington University , Second, George Washington University is in Washington D.C. The answer is {Washington, D.C.}.
+cot_prompt = Template("""Answer the question step by step and return the results in JSON format using the "reason" and "answer" fields.
+Here are six examples:
+Q: What state is home to the university that is represented in sports by George Washington Colonials men's basketball?
+A: {
+    "reason": "First, the education institution has a sports team named George Washington Colonials men's basketball in is George Washington University , Second, George Washington University is in Washington D.C.",
+    "answer": "Washington, D.C."
+}
 
 Q: Who lists Pramatha Chaudhuri as an influence and wrote Jana Gana Mana?
-A: First, Bharoto Bhagyo Bidhata wrote Jana Gana Mana. Second, Bharoto Bhagyo Bidhata lists Pramatha Chaudhuri as an influence. The answer is {Bharoto Bhagyo Bidhata}.
+A: {
+    "reason": "First, Bharoto Bhagyo Bidhata wrote Jana Gana Mana. Second, Bharoto Bhagyo Bidhata lists Pramatha Chaudhuri as an influence.",
+    "answer": "Bharoto Bhagyo Bidhata"
+}
 
 Q: Who was the artist nominated for an award for You Drive Me Crazy?
-A: First, "You Drive Me Crazy" is performed by Britney Spears. Therefore, the artist referred to in the question is Britney Spears. The answer is {Britney Spears}.
+A: {
+    "reason": "First, \\"You Drive Me Crazy\\" is performed by Britney Spears. Therefore, the artist referred to in the question is Britney Spears.",
+    "answer": "Britney Spears"
+}
 
 Q: What person born in Siegen influenced the work of Vincent Van Gogh?
-A: First, Peter Paul Rubens, Claude Monet and etc. influenced the work of Vincent Van Gogh. Second, Peter Paul Rubens born in Siegen. The answer is {Peter Paul Rubens}.
+A: {
+    "reason": "First, Peter Paul Rubens, Claude Monet and etc. influenced the work of Vincent Van Gogh. Second, Peter Paul Rubens born in Siegen.",
+    "answer": "Peter Paul Rubens"
+}
 
 Q: What is the country close to Russia where Mikheil Saakashvii holds a government position?
-A: First, China, Norway, Finland, Estonia and Georgia is close to Russia. Second, Mikheil Saakashvii holds a government position at Georgia. The answer is {Georgia}.
+A: {
+    "reason": "First, China, Norway, Finland, Estonia and Georgia is close to Russia. Second, Mikheil Saakashvii holds a government position at Georgia.",
+    "answer": "Georgia"
+}
 
 Q: What drug did the actor who portrayed the character Urethane Wheels Guy overdosed on?
-A: First, Mitchell Lee Hedberg portrayed character Urethane Wheels Guy. Second, Mitchell Lee Hedberg overdose Heroin. The answer is {Heroin}."""
+A: {
+    "reason": "First, Mitchell Lee Hedberg portrayed character Urethane Wheels Guy. Second, Mitchell Lee Hedberg overdose Heroin.",
+    "answer": "Heroin"
+}
 
+Now directly output the results of the following question in JSON format using the "reason" and "answer" fields without other information or notes.
+Q: $question
+A: """)
 
 

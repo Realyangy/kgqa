@@ -1,7 +1,10 @@
 import os
+import re
 import json
+import time
 import argparse
 from tqdm import tqdm
+from collections import Counter
 
 from utils import *
 from prompt_list import *
@@ -31,6 +34,34 @@ def disable_net_proxy():
     for var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"]:
         os.environ.pop(var, None)
 
+
+# 解析LLM输出的最终答案
+def parse_answer(response):
+    data = json.loads(response)
+    if not isinstance(data, dict) or "answer" not in data:
+        raise ValueError("Invalid answer JSON")
+
+    answer = data["answer"]
+    if answer is not None and not isinstance(answer, str):
+        raise ValueError("answer must be a string or null")
+
+    return answer.strip() if answer is not None else None
+
+
+# Self-Consistency答案多数投票
+def majority_vote(answers):
+    valid_answers = [answer for answer in answers if isinstance(answer, str) and answer.strip()]
+    if not valid_answers:
+        return None
+
+    normalized_answers = [re.sub(r"[\W_]+", "", answer.casefold()) for answer in valid_answers]
+    counter = Counter(normalized_answers)
+
+    # 票数相同时，选择最早出现的答案
+    best_index = max(range(len(valid_answers)), key=lambda i: (counter[normalized_answers[i]], -i))
+    return valid_answers[best_index]
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt_methods", type=str, default="cot", choices=["cot", "io"], help="Prompting method.")    
@@ -58,10 +89,28 @@ if __name__ == '__main__':
             question = i[question_string]
             logger.info("\nCurrent Question: %s", question)
             if args.prompt_methods == "cot":
-                prompt = cot_prompt + "\n\nQ: " + question + "\nA: "
+                prompt = cot_prompt.substitute(question=question)
             else:
-                prompt = io_prompt + "\n\nQ: " + question + "\nA: "
-            results = run_llm(prompt, args.temperature, args.max_length, args.base_url, args.api_key, args.LLM_type)
-            logger.info("LLM Response [%s]:\n%s", args.prompt_methods.upper(), results)
-            out.write(json.dumps({"question": question, "{}_result".format(args.prompt_methods): results}, ensure_ascii=False) + '\n')
+                prompt = io_prompt.substitute(question=question)
+            start_time = time.time()
+            response, token_num = run_llm(prompt, args.temperature, args.max_length, args.base_url, args.api_key, args.LLM_type)
+            answer, reason = parse_answer_json(response, args.prompt_methods)
+            logger.info("LLM Response [%s]:\n%s", args.prompt_methods.upper(), response)
+            logger.info("Answer: %s", answer)
+
+            result_data = {
+                question_string: question,
+                "results": answer,
+                "reasoning_chains": [],
+                "call_num": 1,
+                "total_token": token_num["total"],
+                "input_token": token_num["input"],
+                "output_token": token_num["output"],
+                "time": time.time() - start_time
+            }
+
+            if args.prompt_methods == "cot":
+                result_data["reason"] = reason
+
+            out.write(json.dumps(result_data, ensure_ascii=False) + "\n")
             out.flush()

@@ -1,3 +1,4 @@
+import os
 import time
 import json
 from openai import OpenAI
@@ -72,8 +73,6 @@ def parse_answer_json(response, method):
     return answer.strip() if answer is not None else None, reason
 
 
-
-
 def prepare_dataset(dataset_name):
     if dataset_name == 'cwq':
         with open('../../../data/test/cwq.json',encoding='utf-8') as f:
@@ -91,3 +90,24 @@ def prepare_dataset(dataset_name):
         print("dataset not found")
         exit(-1)
     return datas, question_string
+
+
+# 读取已有结果，同一问题以最后一条记录为准
+def load_previous_results(output_file, question_string):
+    previous_results = {}
+    if not os.path.exists(output_file):
+        return previous_results
+
+    with open(output_file, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                result = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            question = result.get(question_string)
+            if question is not None:
+                previous_results[question] = result
+
+    return previous_results
+

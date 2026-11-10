@@ -61,10 +61,10 @@ def parse_answer_json(response, method):
     answer = data["answer"]
     if answer is not None and not isinstance(answer, str):
         raise ValueError("answer must be a string or null")
-
-    # CoT需要额外解析推理过程
+        
+    # CoT和SC需要额外解析推理过程
     reason = None
-    if method == "cot":
+    if method in ("cot", "sc"):
         reason = data.get("reason")
         if not isinstance(reason, str):
             raise ValueError("reason must be a string")

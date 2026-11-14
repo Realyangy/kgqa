@@ -12,7 +12,10 @@ def if_all_zero(topn_scores):
 
 
 # 调用LLM
-def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-turbo"):
+def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-turbo", stats=None):
+    # 每次调用run_llm计为一次算法层面的LLM调用，内部重试不重复计数
+    if stats is not None:
+        stats["call_num"] += 1
     client = OpenAI(api_key=api_key, base_url=base_url)
     messages = [
         {
@@ -43,6 +46,12 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-
                 response_format={"type": "json_object"},
                 extra_body=extra_body
             )
+            # 累计已经返回的Token，包括后续被判定为截断的输出
+            if stats is not None and response.usage is not None:
+                stats["input_token"] += response.usage.prompt_tokens or 0
+                stats["output_token"] += response.usage.completion_tokens or 0
+                stats["total_token"] += response.usage.total_tokens or 0
+
             content = response.choices[0].message.content
 
             # 检查输出是否为空或者被截断
@@ -188,17 +197,25 @@ def parse_selected_entities(response, entity_candidates):
         raise EntitySelectionParseError(response, entity_candidates) from error
 
 
-# 保存样本结果，保存的内容包括问题、LLM的回答、检索到的三元组
-def save_2_jsonl(question, answer, cluster_chain_of_entities, output_file):
-    logger.info("Answer: %s\n", answer)
-
-    result = {
-        "question": question,
-        "results": answer,
-        "reasoning_chains": cluster_chain_of_entities
+# 整理单题的计算开销
+def get_computational_cost(stats, start_time):
+    stats = stats or {}
+    return {
+        "call_num": stats.get("call_num", 0),
+        "total_token": stats.get("total_token", 0),
+        "input_token": stats.get("input_token", 0),
+        "output_token": stats.get("output_token", 0),
+        "time": time.time() - start_time if start_time is not None else 0
     }
 
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+# 保存样本结果，保存的内容包括问题、LLM的回答、检索到的三元组及计算开销
+def save_2_jsonl(question, answer, cluster_chain_of_entities, output_file, stats=None, start_time=None):
+    logger.info("Answer: %s\n", answer)
+    result = {"question": question, "results": answer, "reasoning_chains": cluster_chain_of_entities}
+    result.update(get_computational_cost(stats, start_time))
+
+    os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as outfile:
         outfile.write(json.dumps(result, ensure_ascii=False) + "\n")
 
@@ -246,7 +263,7 @@ def parse_answer_json(response, require_sufficient=False):
 # 未检索到相关信息时，直接调用LLM回答问题
 def generate_without_explored_paths(question, args):
     prompt = answer_directly_prompt.substitute(question=question)
-    response = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
+    response = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type, stats=args._llm_stats)
     logger.info("LLM Response [Direct Answer]:\n%s", response)
     result = parse_answer_json(response)
     answer = result["answer"]
@@ -294,13 +311,11 @@ def prepare_dataset(dataset_name):
 #         f.write(json.dumps(error_result, ensure_ascii=False) + "\n")
 
 
-def save_error_result(output_file, question, reasoning_chains=None):
-    error_result = {
-        "question": question,
-        "results": "error",
-        "reasoning_chains": reasoning_chains,
-    }
+def save_error_result(output_file, question, reasoning_chains=None, stats=None, start_time=None):
+    error_result = {"question": question, "results": "error", "reasoning_chains": reasoning_chains}
+    error_result.update(get_computational_cost(stats, start_time))
 
+    os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(error_result, ensure_ascii=False) + "\n")
 

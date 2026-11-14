@@ -45,6 +45,7 @@ def sample_count(value):
         raise argparse.ArgumentTypeError("expected a non-negative integer or None")
 
 
+# 规范化起点实体
 def normalize_topic_entities(raw_topic_entities):
     if isinstance(raw_topic_entities, dict):
         return [Entity(id=str(entity_id), name=str(name)) for entity_id, name in raw_topic_entities.items() if entity_id and name]
@@ -53,6 +54,7 @@ def normalize_topic_entities(raw_topic_entities):
     return []
 
 
+# 为每题保存详细信息
 def save_detail(output_dir, run_name, question_id, data, question, result, prompt_history, sparql_history):
     detail_dir = Path(output_dir) / "details" / run_name
     detail_dir.mkdir(parents=True, exist_ok=True)
@@ -94,6 +96,7 @@ def main():
     for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"):
         os.environ.pop(name, None)
 
+    # 加载数据集，必要时采样
     datas, question_string, id_field = prepare_dataset(args.dataset, args.data_dir)
     total_size = len(datas)
     if args.dataset_sample_num is not None:
@@ -102,38 +105,47 @@ def main():
         indices = sorted(random.Random(args.dataset_sample_seed).sample(range(total_size), args.dataset_sample_num))
         datas = [datas[index] for index in indices]
 
+    # 构造运行文件名称
     sample_label = "all" if args.dataset_sample_num is None else args.dataset_sample_num
     run_name = f"CoR_data_{args.dataset}_sampleNum_{sample_label}_sampleSeed_{args.dataset_sample_seed}_modelName_{args.model_name.lower()}"
     output_file = os.path.join(args.output_dir, run_name + ".jsonl")
     logger = initialize_logger(output_file)
     logger.info("Start CoR | dataset=%s samples=%d/%d seed=%d model=%s", args.dataset, len(datas), total_size, args.dataset_sample_seed, args.model_name)
 
+    # 检查是否有以及处理过的样本
     previous_results = load_previous_results(output_file, question_string)
     logger.info("Loaded %d previous question results.", len(previous_results))
+    # 实例化CoR Agent，开始CoR
     agent = CoRAgent(model_name=model_config["model_path"], base_url=model_config["base_url"], api_key=model_config["api_key"], args=args)
 
     for data in tqdm(datas, desc="Processing"):
+        # 跳过处理过的样本
         question = data[question_string]
         last = previous_results.get(question)
         if last is not None and last.get("results") != "error":
             continue
 
+        # 记录处理的时间和计算开销
         agent.llm_api.reset_usage()
         started = time.monotonic()
+        # 记录每次提示词和SPARQL查询结果
         prompt_history, sparql_history = [], []
         question_id = data.get(id_field, question)
         logger.info("Current Question: %s", question)
 
         try:
+            # 仅使用第一个起点实体
             topic_entities = normalize_topic_entities(data.get("topic_entity", {}))
             if len(topic_entities) > 1:
                 logger.info("CoR uses the first of %d topic entities: %s", len(topic_entities), topic_entities[0].name)
             result = agent.answer(question=question, topic_entities=topic_entities, prompt_history=prompt_history, sparql_history=sparql_history)
+            # 检查CoR是否失败
             if result.get("action") == "ERROR":
                 raise RuntimeError(str(result.get("reasoning_chains", "CoR failed")))
             if result.get("action") == "generate_directly" and prompt_history and prompt_history[-1].get("response") is None:
                 raise RuntimeError("LLM failed to generate a direct answer")
 
+            # 提取答案并保存
             raw_results = result.get("results", [])
             if isinstance(raw_results, str):
                 raw_results = [raw_results]
@@ -144,6 +156,7 @@ def main():
                          agent.llm_api, started, output_file, id=question_id,
                          action=result.get("action", ""), predicted_entities=raw_results)
 
+            # 必要时记录详细信息
             if args.save_detail:
                 try:
                     save_detail(args.output_dir, run_name, question_id, data, question, result, prompt_history, sparql_history)

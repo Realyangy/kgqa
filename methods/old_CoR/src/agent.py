@@ -151,6 +151,7 @@ class CoRAgent:
 
         return results
 
+    # 归一化所有起点实体
     @staticmethod
     def _normalize_topic_entities(topic_entities: List[Any]) -> List[Entity]:
         normalized_entities: List[Entity] = []
@@ -851,6 +852,7 @@ class CoRAgent:
         return result
 
 
+    # 根据问题和起点实体回答
     def answer(self, question: str, topic_entities: List[Entity], **kwargs) -> Dict[str, Any]:
         if not topic_entities:
             return {

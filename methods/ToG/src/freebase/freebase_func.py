@@ -167,7 +167,7 @@ def relation_search_prune(entity_id, entity_name, pre_relations, pre_head, quest
 
     # 构造Prompt
     prompt = construct_relation_prune_prompt(question, entity_name, relation_candidates, args)
-    result = run_llm(prompt, args.temperature_exploration, args.max_length, args.base_url, args.api_key, args.LLM_type)
+    result = run_llm(prompt, args.temperature_exploration, args.max_length, args.base_url, args.api_key, args.LLM_type, stats=args._llm_stats)
     flag, retrieve_relations_with_scores = clean_relations(result, entity_id, entity_name, relation_candidates)
 
     args._last_relation_search = {"all_candidates": relation_candidates}
@@ -220,7 +220,7 @@ def entity_select(question, entity_candidates_id, relation_score, relation, enti
     entity_name = id2entity_name_or_type(entity_id)
 
     prompt = construct_entity_selection_prompt(question, entity_name, relation, entity_pairs)
-    response = run_llm(prompt, args.temperature_exploration, 1024, args.base_url, args.api_key, args.LLM_type)
+    response = run_llm(prompt, args.temperature_exploration, 1024, args.base_url, args.api_key, args.LLM_type, stats=args._llm_stats)
     selected_ids = parse_selected_entities(response, entity_candidates)
 
     # 选中实体得分为1，未选中实体得分为0
@@ -248,10 +248,10 @@ def update_history(entity_candidates, entity, scores, entity_candidates_id, tota
 
 
 # 检索不到额外信息时，中止搜索，调用下面的generate_answer回答
-def half_stop(question, cluster_chain_of_entities, output_file, depth, args):
+def half_stop(question, cluster_chain_of_entities, output_file, depth, args, start_time=None):
     logger.info("No new knowledge added during search depth %d, stop searching.", depth)
     answer = generate_answer(question, cluster_chain_of_entities, args)
-    save_2_jsonl(question, answer, cluster_chain_of_entities, output_file=output_file)
+    save_2_jsonl(question, answer, cluster_chain_of_entities, output_file=output_file, stats=args._llm_stats, start_time=start_time)
 
 
 # 使用已经检索到的知识生成最终答案，并保存
@@ -267,7 +267,7 @@ def generate_answer(question, cluster_chain_of_entities, args):
         question=question,
         knowledge_triplets=chain_prompt,
     )
-    response = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
+    response = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type, stats=args._llm_stats)
 
     # 记录LLM原始回答
     logger.info("LLM Response [Generate Answer]:\n%s", response)
@@ -330,7 +330,7 @@ def reasoning(question, cluster_chain_of_entities, args):
     # 构造Prompt
     prompt = evaluate_prompt.substitute(question=question, knowledge_triplets=chain_prompt)
 
-    response = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type)
+    response = run_llm(prompt, args.temperature_reasoning, args.max_length, args.base_url, args.api_key, args.LLM_type, stats=args._llm_stats)
     logger.info("LLM Response [Reasoning]:\n%s", response)
     result = parse_answer_json(response, require_sufficient=True)
     sufficient, answer= result["sufficient"], result["answer"]

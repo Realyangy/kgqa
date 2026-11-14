@@ -47,10 +47,12 @@ class CoRRefactorSmokeTest(unittest.TestCase):
                 return "Backtrack", "{}", []
             return "Stop", "{}", ["Alice"]
 
-        with patch.object(self.agent, "relation_search", return_value=(["r.first", "r.second"], [])), \\
-             patch.object(self.agent, "relation_prune", return_value=relations), \\
-             patch.object(self.agent, "entity_search", side_effect=entity_search), \\
-             patch.object(self.agent, "reasoning", side_effect=reasoning):
+        with (
+            patch.object(self.agent, "relation_search", return_value=(["r.first", "r.second"], [])),
+            patch.object(self.agent, "relation_prune", return_value=relations),
+            patch.object(self.agent, "entity_search", side_effect=entity_search),
+            patch.object(self.agent, "reasoning", side_effect=reasoning),
+        ):
             result = self.agent.answer("Who is Alice?", [self.root], prompt_history=[], sparql_history=[])
 
         self.assertEqual(visited, ["r.first", "r.second"])

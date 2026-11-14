@@ -1,5 +1,6 @@
 import os
 import random
+import time
 import argparse
 from tqdm import tqdm
 
@@ -78,9 +79,13 @@ if __name__ == '__main__':
         # 重新处理错误样本
         previous_result = previous_results.get(question)
         if previous_result is not None:
-            if previous_result.get("results") != "error":
+            if previous_result.get("results") != "error" and all(key in previous_result for key in ("call_num", "total_token", "input_token", "output_token", "time")):
                 continue
             logger.info("Retry failed question: %s", question)
+
+        # 初始化单题计算开销，每次调用run_llm计一次LLM Call
+        start_time = time.time()
+        args._llm_stats = {"call_num": 0, "total_token": 0, "input_token": 0, "output_token": 0}
 
         # 起点实体信息：pre_relations记录上一跳关系，pre_head记录上一跳方向，用于避免立即回退
         try:
@@ -103,7 +108,7 @@ if __name__ == '__main__':
             # 起点实体为空，则调用LLM直接回答
             if len(topic_entities) == 0:
                 results = generate_without_explored_paths(question, args)
-                save_2_jsonl(question, results, [], output_file=args.output_file)
+                save_2_jsonl(question, results, [], output_file=args.output_file, stats=args._llm_stats, start_time=start_time)
                 continue
 
             # 用于标记当前问题是否已经生成并保存结果
@@ -179,7 +184,7 @@ if __name__ == '__main__':
 
                 # 所有关系都没有后续实体时，中断搜索
                 if len(total_candidates) ==0:
-                    half_stop(question, cluster_chain_of_entities, args.output_file, depth, args)
+                    half_stop(question, cluster_chain_of_entities, args.output_file, depth, args, start_time=start_time)
                     flag_printed = True
                     break
 
@@ -200,7 +205,7 @@ if __name__ == '__main__':
                     # 足以回答问题
                     if stop:
                         logger.info("Reason result:\nToG stoped at depth %d.", depth)
-                        save_2_jsonl(question, results, cluster_chain_of_entities, output_file=args.output_file)
+                        save_2_jsonl(question, results, cluster_chain_of_entities, output_file=args.output_file, stats=args._llm_stats, start_time=start_time)
                         flag_printed = True
                         break
 
@@ -213,7 +218,7 @@ if __name__ == '__main__':
                         logger.info("Reason result:\nDepth %d still not find the answer.", depth)
 
                         if all(entity_id == "[FINISH_ID]" for entity_id in selected_entity_ids):
-                            half_stop(question, cluster_chain_of_entities, args.output_file, depth, args)
+                            half_stop(question, cluster_chain_of_entities, args.output_file, depth, args, start_time=start_time)
                             flag_printed = True
                             break
 
@@ -240,7 +245,7 @@ if __name__ == '__main__':
                             topic_entities = list(unique_topic_entities.values())
                 
                 else:
-                    half_stop(question, cluster_chain_of_entities, args.output_file, depth, args)
+                    half_stop(question, cluster_chain_of_entities, args.output_file, depth, args, start_time=start_time)
                     flag_printed = True
                     break
 
@@ -249,10 +254,10 @@ if __name__ == '__main__':
                 # 有KG信息时结合回答
                 if cluster_chain_of_entities:
                     results = generate_answer(question, cluster_chain_of_entities, args)
-                    save_2_jsonl(question, results, cluster_chain_of_entities, output_file=args.output_file)
+                    save_2_jsonl(question, results, cluster_chain_of_entities, output_file=args.output_file, stats=args._llm_stats, start_time=start_time)
                 else:
                     results = generate_without_explored_paths(question, args)
-                    save_2_jsonl(question, results, [], output_file=args.output_file)
+                    save_2_jsonl(question, results, [], output_file=args.output_file, stats=args._llm_stats, start_time=start_time)
 
         # # 异常处理
         # except Exception:
@@ -271,5 +276,5 @@ if __name__ == '__main__':
                     "raw_llm_output": error.raw_output,
                 }
 
-            save_error_result(args.output_file, question, reasoning_chains)
+            save_error_result(args.output_file, question, reasoning_chains, stats=args._llm_stats, start_time=start_time)
             continue

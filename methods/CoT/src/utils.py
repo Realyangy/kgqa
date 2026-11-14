@@ -28,6 +28,11 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-
         response_format={"type": "json_object"},
         extra_body=extra_body
     )
+
+    # 检测是否超出了最大token限制
+    if completion.choices[0].finish_reason == "length":
+        logger.warning("LLM output truncated at max_tokens=%d", max_tokens)
+
     content = completion.choices[0].message.content
     usage = completion.usage
     if usage is None:

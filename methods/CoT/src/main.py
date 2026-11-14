@@ -67,10 +67,10 @@ MODELS_DICT = {
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--prompt_methods", type=str, default="cot", choices=["io", "cot", "sc"], help="Prompting method.")
+    parser.add_argument("--prompt_methods", type=str, default="sc", choices=["io", "cot", "sc"], help="Prompting method.")
     parser.add_argument("--sc_samples", type=int, default=6, help="Number of sampled reasoning paths for SC.")
-    parser.add_argument("--model_name", type=str, default="GPT-4o-Mini", choices=MODELS_DICT.keys(), help="Model configuration name.")
-    parser.add_argument("--max_length", type=int, default=512, help="Maximum LLM output tokens.")
+    parser.add_argument("--model_name", type=str, default="DeepSeekV4.1-Flash", choices=MODELS_DICT.keys(), help="Model configuration name.")
+    parser.add_argument("--max_length", type=int, default=1024, help="Maximum LLM output tokens.")
     parser.add_argument("--temperature", type=float, default=None, help="Generation temperature.")
     parser.add_argument("--dataset", type=str, default="cwq", help="Dataset.")
     parser.add_argument("--dataset_sample_num", type=int, default=500, help="Number of dataset samples.")
@@ -110,7 +110,7 @@ if __name__ == '__main__':
 
     os.makedirs(args.output_dir, exist_ok=True)
     output_file = os.path.join(args.output_dir, f"{output_name}.jsonl")
-    logger = initialize_logger(args.output_dir, args.dataset, args.prompt_methods, args.model_name)
+    logger = initialize_logger(output_file)
 
     logger.info("\n===== Start Running %s on %s dataset =====", args.prompt_methods.upper(), args.dataset)
     logger.info("Dataset sampling: %d/%d samples, seed=%d", len(datas), total_dataset_size, args.dataset_sample_seed)

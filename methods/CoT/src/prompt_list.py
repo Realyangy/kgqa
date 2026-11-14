@@ -63,7 +63,7 @@ A: {
     "answer": "Heroin"
 }
 
-Now directly output the results of the following question in JSON format using the "reason" and "answer" fields without other information or notes.
+Now directly output the results of the following question in JSON format using the "reason" and "answer" fields without other information or notes. Keep the reasoning concise and focus only on essential steps.
 Q: $question
 A: """)
 

@@ -1,16 +1,11 @@
 import logging
 import os
 
-
 logger = logging.getLogger("CoT")
 
-
-def initialize_logger(output_dir, dataset, prompt_method, model_name):
-    os.makedirs(output_dir, exist_ok=True)
-    log_file = os.path.join(
-        output_dir,
-        f"CoT_data_{dataset}_prompt_{prompt_method}_modelName_{model_name.lower()}.log",
-    )
+def initialize_logger(output_file):
+    log_file = os.path.splitext(output_file)[0] + ".log"
+    os.makedirs(os.path.dirname(log_file) or ".", exist_ok=True)
 
     logger.setLevel(logging.INFO)
     for handler in logger.handlers[:]:

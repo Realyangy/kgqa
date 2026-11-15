@@ -1,5 +1,5 @@
-import logging
 import os
+import logging
 
 
 def initialize_logger(output_file):

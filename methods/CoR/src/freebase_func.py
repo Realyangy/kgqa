@@ -1,37 +1,36 @@
-
 import os
-import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
-
+import logging
 from SPARQLWrapper import SPARQLWrapper, JSON
+from typing import Dict, List, Optional, Tuple
+
 from schema import Entity, Relation
 
 
 SPARQLPATH = "http://localhost:8890/sparql"
-SPARQL_TIMEOUT = int(os.getenv("SPARQL_TIMEOUT", "30"))
 SPARQL_LABEL_BATCH_SIZE = int(os.getenv("FREEBASE_LABEL_BATCH_SIZE", "100"))
+
 _FREEBASE_URI_PREFIX = "http://rdf.freebase.com/ns/"
 _ID2NAME_CACHE: Dict[str, str] = {}
 
-
-sparql_relations = r"""PREFIX ns: <http://rdf.freebase.com/ns/>
+# 查询关系
+sparql_relations = """PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?relation
 WHERE {
-  {{query}}
+  %s
 } LIMIT 1000
 """
 
-sparql_entities = r"""PREFIX ns: <http://rdf.freebase.com/ns/>
+# 查询实体
+sparql_entities = """PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?targetEntity
 WHERE {
-  {{query}}
+  %s
 } LIMIT 1000
 """
 
-
-
-sparql_id2name = r"""PREFIX ns: <http://rdf.freebase.com/ns/>
+# 根据实体ID查询实体名称
+sparql_id2name = """PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?targetEntity
 WHERE {
   {
@@ -41,38 +40,29 @@ WHERE {
   UNION
   {
     ?entity <http://www.w3.org/2002/07/owl#sameAs> ?targetEntity .
-    FILTER(?entity = ns:{{entity_id}})
+    FILTER(?entity = ns:%s)
   }
 } LIMIT 1
 """
 
+# 构造关系查询的SPARQL
 def build_sparql_relations(query):
-    return sparql_relations.replace("{{query}}", query)
+    return sparql_relations % query
 
-
+# 构造实体查询的SPARQL
 def build_sparql_entities(query):
-    return sparql_entities.replace("{{query}}", query)
+    return sparql_entities % query
 
-
-
-
-
-
+# 构造根据实体ID查询实体名称的SPARQL
 def _render_id2name_query(entity_id):
-    template = sparql_id2name.replace("{{entity_id}}", entity_id)
-    count = template.count("%s")
-    if count == 0:
-        return template
-    if count == 1:
-        return template % (entity_id,)
-    return template % (entity_id, entity_id)
+    return sparql_id2name % (entity_id, entity_id)
 
-
+# 删除实体前缀
 def _normalize_entity_uri(entity_uri: str) -> str:
-    text = str(entity_uri or "").strip()
-    if text.startswith(_FREEBASE_URI_PREFIX):
-        return text[len(_FREEBASE_URI_PREFIX) :]
-    return text
+    entity_uri_str = entity_uri.strip()
+    if entity_uri_str.startswith(_FREEBASE_URI_PREFIX):
+        return entity_uri_str[len(_FREEBASE_URI_PREFIX) :]
+    return entity_uri_str
 
 
 def _label_rank(lang: str) -> int:
@@ -110,7 +100,6 @@ def execurte_sparql_with_meta(sparql_txt):
             sparql = SPARQLWrapper(SPARQLPATH)
             sparql.setQuery(sparql_txt)
             sparql.setReturnFormat(JSON)
-            sparql.setTimeout(SPARQL_TIMEOUT)
             results = sparql.query().convert()
             return {
                 "rows": results["results"]["bindings"],
@@ -192,7 +181,6 @@ def id2entity_name_or_type(entity_id):
             sparql = SPARQLWrapper(SPARQLPATH)
             sparql.setQuery(sparql_str)
             sparql.setReturnFormat(JSON)
-            sparql.setTimeout(SPARQL_TIMEOUT)
             results = sparql.query().convert()
             bindings = results.get("results", {}).get("bindings", [])
             if len(bindings) == 0:

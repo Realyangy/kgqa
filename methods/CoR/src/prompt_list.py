@@ -1,8 +1,6 @@
 from string import Template
 
-relation_pruning_system_prompt = Template(r"""
-You are a KG relation-pruning expert.
-Given a question and forward/backward relation candidates under the current reasoning path, select the most useful top-3 relations for answer-oriented expansion.
+relation_pruning_system_prompt = Template("""You are a KG relation-pruning expert. Given a question and forward/backward relation candidates under the current reasoning path, select the most useful top-3 relations for answer-oriented expansion.
 
 # Instruction
 1. Select no more than top-3 relations from the provided candidates.
@@ -47,13 +45,12 @@ Answer:
   "relation_by_relevance": ["film.performance.character", "film.performance.film", "film.film.starring"]
 }""")
 
+
 relation_pruning_user_prompt = Template(r"""Q: ${question}
 ${relations}
 Answer: """)
 
-reasoning_system_prompt = Template(r"""# Task Definition
-You are a KG reasoning-path validator for main exploration.
-Given a question and a SPARQL-style reasoning chain, evaluate the path and output the next action.
+reasoning_system_prompt = Template("""You are a KG reasoning-path validator for main exploration. Given a question and a SPARQL-style reasoning chain, evaluate the path and output the next action.
 
 # Instruction
 1. Treat the chain as SPARQL-style triples with strict direction semantics.

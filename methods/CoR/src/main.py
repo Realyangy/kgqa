@@ -1,16 +1,15 @@
-import argparse
-import json
 import os
-import random
 import re
+import json
 import time
+import random
+import argparse
+from tqdm import tqdm
 from pathlib import Path
 
-from tqdm import tqdm
-
+from schema import Entity
 from agent import CoRAgent
 from logging_utils import initialize_logger
-from schema import Entity
 from utils import load_previous_results, prepare_dataset, save_2_jsonl
 
 
@@ -73,8 +72,7 @@ def save_detail(output_dir, run_name, question_id, data, question, result, promp
 
 def main():
     parser = argparse.ArgumentParser(description="CoR Freebase KGQA baseline")
-    project_root = Path(__file__).resolve().parents[3]
-    parser.add_argument("--data_dir", default=str(project_root / "data" / "test"))
+    parser.add_argument("--data_dir", default="/home/flyvideo/Sata2/lyy/kgqa/data/test")
     parser.add_argument("--dataset", choices=["cwq", "webqsp", "grailqa"], default="cwq")
     parser.add_argument("--dataset_sample_num", type=sample_count, default=500)
     parser.add_argument("--dataset_sample_seed", type=int, default=42)

@@ -160,12 +160,10 @@ class CoRAgent:
                     normalized_entities.append(Entity(entity_id, entity_name, 0.0))
         return normalized_entities
 
+
+    # 扩展双向关系，如果LLM选择的某个关系在head_relations和tail_relations中都出现，那么会在两个方向上都进行扩展
     @staticmethod
-    def _expand_bidirectional_relations(
-        selected_relations: List[Relation],
-        head_relations: List[str],
-        tail_relations: List[str],
-    ) -> List[Relation]:
+    def _expand_bidirectional_relations(selected_relations: List[Relation], head_relations: List[str], tail_relations: List[str]) -> List[Relation]:
         head_set = set(head_relations)
         tail_set = set(tail_relations)
         expanded: List[Relation] = []
@@ -195,18 +193,20 @@ class CoRAgent:
 
         return expanded
 
+    
+    # 对需要LLM进行关系剪枝之前的候选集进行截断
     @staticmethod
-    def _cap_relations_by_threshold(
-        head_relations: List[str],
-        tail_relations: List[str],
-        threshold: int,
-    ) -> Tuple[List[str], List[str]]:
+    def _cap_relations_by_threshold(head_relations: List[str], tail_relations: List[str], threshold: int) -> Tuple[List[str], List[str]]:
         limit = max(1, int(threshold))
         if len(head_relations) + len(tail_relations) <= limit:
             return list(head_relations), list(tail_relations)
+
+        # 取所有的出入边关系，并截断
         combined: List[Tuple[str, bool]] = [(relation, True) for relation in head_relations]
         combined.extend((relation, False) for relation in tail_relations)
         truncated = combined[:limit]
+
+        # 先用出边关系填充，不足limit时补充入边关系
         new_head: List[str] = []
         new_tail: List[str] = []
         for relation, is_head in truncated:
@@ -216,10 +216,15 @@ class CoRAgent:
                 new_tail.append(relation)
         return new_head, new_tail
 
+    # 将关系链转化为字符串，作为关系链签名
     @staticmethod
     def _relation_chain_signature(relation_chain: List[Relation]) -> str:
+        
+        # 没有关系链时是根节点
         if not relation_chain:
             return "<root>"
+        
+        # 根据关系方向构造关系链签名
         parts: List[str] = []
         for relation in relation_chain:
             direction = "->" if relation.left else "<-"
@@ -581,21 +586,40 @@ class CoRAgent:
         return False, ""
 
 
+    # 关系搜索：只根据起点实体和走过的关系链进行后续的关系查询，查询结果是下一跳关系
     def relation_search(self, topic_entity, relation_chain, sparql_history):
+        # 提取当前关系链对应的SPARQL路径，及其关系链末端的实体
         extract, last = freebase_func.build_relation_extract(topic_entity.id, relation_chain)
+
+        # 前向关系查询：当前末端实体 -> 关系 -> 隐实体，可以得到当前末端实体的出边关系集合
         head_query = freebase_func.build_sparql_relations(extract + f"{last} ?relation ?x .")
+        head_meta = freebase_func.execurte_sparql_with_meta(head_query)        
+        # 反向关系查询：隐实体 -> 关系 -> 当前末端实体，可以得到当前末端实体的入边关系集合
         tail_query = freebase_func.build_sparql_relations(extract + f"?x ?relation {last} .")
-        head_meta = freebase_func.execurte_sparql_with_meta(head_query)
         tail_meta = freebase_func.execurte_sparql_with_meta(tail_query)
-        head_rows, tail_rows = head_meta.get("rows", []) or [], tail_meta.get("rows", []) or []
+
+        # 提取查询关系查询结果，并去除前缀
+        head_rows = head_meta.get("rows", []) or []
         head = freebase_func.replace_relation_prefix(head_rows) if head_rows else []
+        tail_rows = tail_meta.get("rows", []) or []
         tail = freebase_func.replace_relation_prefix(tail_rows) if tail_rows else []
+
+        # 记录本次出入边关系的查询结果和状态
         for direction, query, meta, relations in (("head", head_query, head_meta, head), ("tail", tail_query, tail_meta, tail)):
-            sparql_history.append(self._with_trace({"search_type": f"relation_search_{direction}", "sparql": query,
-                "result_count": len(relations), "status": str(meta.get("status", "ok")), "timed_out": bool(meta.get("timed_out", False))}))
+            sparql_history.append(self._with_trace({
+                "search_type": f"relation_search_{direction}",
+                "sparql": query,
+                "result_count": len(relations),
+                "status": str(meta.get("status", "ok")),
+                "timed_out": bool(meta.get("timed_out", False))
+            }))
+
+        # 删除无关关系
         if self.remove_unnecessary_rel:
             head = [r for r in head if not freebase_func.abandon_rels(r)]
             tail = [r for r in tail if not freebase_func.abandon_rels(r)]
+
+        # 避免从上一跳关系返回
         if relation_chain:
             previous = relation_chain[-1]
             if previous.left:
@@ -604,18 +628,27 @@ class CoRAgent:
                 head = [r for r in head if r != previous.id]
         return sorted(set(head)), sorted(set(tail))
 
+
+    # 关系剪枝
     def relation_prune(self, question, topic_entity, relation_chain, head_relations, tail_relations, prompt_history):
+
+        # 限制进入LLM上下文的关系数量，避免过多超过上下文最大长度
         head_relations, tail_relations = self._cap_relations_by_threshold(head_relations, tail_relations, self.sample_relation_threshold)
+
+        # 调用LLM进行关系剪枝
         names = {str(r): str(r) for r in head_relations + tail_relations}
         prompt = self.build_relation_prune_prompt(question, topic_entity, relation_chain, head_relations, tail_relations, names, relation_pruning_user_prompt)
         response, usage = self.llm_api.generate(prompt, self.temperature_exploration, self.max_token, relation_pruning_system_prompt.substitute())
+
+        # 剪枝后的关系数量
         candidate_size = len(head_relations) + len(tail_relations)
         filtered_size = candidate_size
-        warnings = []
-        selected = []
+
+        warnings, selected = [], []
         if not response:
             warnings.append("LLM returned empty response.")
         else:
+            # 解析LLM的输出，并对选择后的关系集合进行截断
             flag, parsed = self._clean_relations(response, head_relations, tail_relations, names)
             if not flag or not isinstance(parsed, list):
                 warnings.append(f"Failed to parse relation prune result: {parsed}")
@@ -628,10 +661,19 @@ class CoRAgent:
                 filtered_size = len(selected)
                 if not selected:
                     warnings.append("No valid relations after validation/acyclic filtering.")
-        prompt_history.append(self._with_trace({"type": "relation_prune", "prompt": prompt,
-            "input_tokens": usage.get("input_tokens", -1), "output_tokens": usage.get("output_tokens", -1),
-            "candidates_size": candidate_size, "filtered_candidate_size": filtered_size,
-            "response": response, "parsed_result": [r.id for r in selected], "warnings": warnings}))
+
+        # 记录到提示词历史
+        prompt_history.append(self._with_trace({
+            "type": "relation_prune",
+            "prompt": prompt,
+            "input_tokens": usage.get("input_tokens", -1),
+            "output_tokens": usage.get("output_tokens", -1),
+            "candidates_size": candidate_size,
+            "filtered_candidate_size": filtered_size,
+            "response": response,
+            "parsed_result": [r.id for r in selected],
+            "warnings": warnings
+        }))
         return selected
 
     def entity_search(self, topic_entity, relation_chain, sparql_history):
@@ -743,41 +785,41 @@ class CoRAgent:
         self._reset_trace()
 
         root_entity = normalized_entities[0]
-        logging.info(
-            "[CoR] Start question | root=%s(%s) | width=%s depth=%s",
-            root_entity.name,
-            root_entity.id,
-            self.relation_width,
-            self.depth,
-        )
+        # logging.info(
+        #     "[CoR] Start question | root=%s(%s) | width=%s depth=%s",
+        #     root_entity.name,
+        #     root_entity.id,
+        #     self.relation_width,
+        #     self.depth,
+        # )
         stack = [(root_entity, [root_entity], 0)]
-
         while stack:
+            # 从栈中取出第一个元素
             node, current_path, current_depth = stack.pop()
 
             if isinstance(node, Entity):
                 relation_chain: List[Relation] = [item for item in current_path[1:] if isinstance(item, Relation)]
                 chain_sig = self._relation_chain_signature(relation_chain)
-                logging.info("[CoR][depth=%s] Entity node | chain=%s", current_depth, chain_sig)
+                logging.info("[depth=%s] %s | chain=%s", current_depth, node.name, chain_sig)
+                
+                # 关系中心的关系搜索
                 sparql_before = len(sparql_history)
                 head_relations, tail_relations = self.relation_search(
                     topic_entity=root_entity,
                     relation_chain=relation_chain,
                     sparql_history=sparql_history,
                 )
-                logging.info(
-                    "[CoR][depth=%s] relation_search done | head=%s tail=%s | chain=%s",
-                    current_depth,
-                    len(head_relations),
-                    len(tail_relations),
-                    chain_sig,
-                )
+                logging.info("[depth=%s] relation_search done | num of head relation = %s num of tail relation = %s | chain=%s", current_depth, len(head_relations), len(tail_relations), chain_sig)
+                
+                # 记录SPARQL查询历史
                 for event in sparql_history[sparql_before:]:
                     step = self._sparql_event_to_step(event)
                     if step is not None:
                         step_history.append(step)
+
+                # 没有候选关系集合时，跳过当前关系链
                 if not head_relations and not tail_relations:
-                    logging.info("[CoR][depth=%s] no relations, skip | chain=%s", current_depth, chain_sig)
+                    logging.info("[depth=%s] no relations, skip | chain=%s", current_depth, chain_sig)
                     continue
 
                 prompt_before = len(prompt_history)
@@ -789,24 +831,28 @@ class CoRAgent:
                     tail_relations=tail_relations,
                     prompt_history=prompt_history,
                 )
+
+                # 记录提示词历史
                 for event in prompt_history[prompt_before:]:
                     step_history.append(self._llm_event_to_step(event))
-                selected_relations = selected_relations[: self.relation_width]
+
+                # 确保关系数量和参数一致，进行截断，并处理双向关系
+                selected_relations = selected_relations[:self.relation_width]
                 selected_relations = self._expand_bidirectional_relations(
                     selected_relations=selected_relations,
                     head_relations=head_relations,
                     tail_relations=tail_relations,
                 )
-                logging.info(
-                    "[CoR][depth=%s] relation_prune selected=%s | chain=%s",
-                    current_depth,
-                    [f"{item.id}({'head' if item.left else 'tail'})" for item in selected_relations],
-                    chain_sig,
-                )
+
+                selected_relations = [f"{item.id}({'head' if item.left else 'tail'})" for item in selected_relations]
+                logging.info("[depth=%s] relation_prune selected:\n%s\nchain=%s", current_depth, '\n'.join(selected_relations), chain_sig)
+
+                # 将剪枝后的关系反向压入栈，作为后续搜索的起点，并开始下一轮的搜索
                 if current_depth < self.depth:
                     for relation in reversed(selected_relations):
                         stack.append((relation, current_path + [relation], current_depth + 1))
                 continue
+
 
             if isinstance(node, Relation):
                 relation_chain: List[Relation] = [item for item in current_path[1:] if isinstance(item, Relation)]

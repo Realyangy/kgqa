@@ -19,4 +19,5 @@ def initialize_logger(output_file):
     console_handler.setFormatter(formatter_console)
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     return logger

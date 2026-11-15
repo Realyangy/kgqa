@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from schema import Entity, Relation
 
 
-SPARQLPATH = "http://localhost:8890/sparql"
+SPARQLPATH = "http://localhost:3001/sparql"
 SPARQL_LABEL_BATCH_SIZE = int(os.getenv("FREEBASE_LABEL_BATCH_SIZE", "100"))
 
 _FREEBASE_URI_PREFIX = "http://rdf.freebase.com/ns/"
@@ -91,7 +91,14 @@ def execurte_sparql(sparql_txt):
     meta = execurte_sparql_with_meta(sparql_txt)
     return meta.get("rows", [])
 
-
+"""
+执行SPARQL查询，并记录查询状态
+"rows": 查询结果,
+"status": 查询状态,
+"timed_out": 查询是否超时,
+"attempts": 查询次数,
+"error": 查询是否错误,
+""" 
 def execurte_sparql_with_meta(sparql_txt):
     last_error = ""
     timed_out = False
@@ -112,15 +119,11 @@ def execurte_sparql_with_meta(sparql_txt):
             last_error = str(e)
             if "timed out" in last_error.lower() or "timeout" in last_error.lower():
                 timed_out = True
-            logging.error(
-                f"Error in executing SPARQL query (attempt {i+1}/3) on endpoint={SPARQLPATH}: {e}"
-            )
+            logging.error(f"Error in executing SPARQL query (attempt {i+1}/3) on endpoint={SPARQLPATH}: {e}")
             if i < 2:
                 time.sleep(2)
             continue
-    logging.error(
-        f"SPARQL query failed after 3 attempts on endpoint={SPARQLPATH}:\n{sparql_txt}"
-    )
+    logging.error(f"SPARQL query failed after 3 attempts on endpoint={SPARQLPATH}:\n{sparql_txt}")
     return {
         "rows": [],
         "status": "timeout" if timed_out else "error",
@@ -143,10 +146,9 @@ def abandon_rels(relation):
 
 
 def replace_relation_prefix(relations):
-    return [
-        relation["relation"]["value"].replace("http://rdf.freebase.com/ns/", "")
-        for relation in relations
-    ]
+    relations = [relation["relation"]["value"].replace("http://rdf.freebase.com/ns/", "") for relation in relations]
+    clean_relations = [relation for relation in relations if not relation.startswith(("http://", "https://"))]
+    return clean_relations
 
 
 def replace_entities_prefix(entities):
@@ -291,8 +293,10 @@ def id2entity_names(entity_ids: List[str]) -> Dict[str, str]:
     return result
 
 
-# SPARQL path building and KG result transformation (extracted from CoRAgent)
+# 将关系链转化为SPARQL路径，用于把实体作为隐变量的关系查询
 def build_relation_extract(topic_entity_id: str, relation_chain: List[Relation]) -> str:
+
+    # 还没有关系链时，说明只有起点实体，那么当前路径末端实体就是起点实体
     if not relation_chain:
         return "", f"ns:{topic_entity_id}"
 

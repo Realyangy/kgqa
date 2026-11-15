@@ -69,6 +69,9 @@ def save_detail(output_dir, run_name, question_id, data, question, result, promp
     with open(detail_dir / f"{safe_id}.json", "w", encoding="utf-8") as outfile:
         json.dump(detail, outfile, ensure_ascii=False, indent=2)
 
+def disable_net_proxy():
+    for var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"]:
+        os.environ.pop(var, None)
 
 def main():
     parser = argparse.ArgumentParser(description="CoR Freebase KGQA baseline")
@@ -90,9 +93,9 @@ def main():
     args = parser.parse_args()
 
     model_config = MODELS_DICT[args.model_name]
+
+    disable_net_proxy()
     random.seed(args.random_seed)
-    for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"):
-        os.environ.pop(name, None)
 
     # 加载数据集，必要时采样
     datas, question_string, id_field = prepare_dataset(args.dataset, args.data_dir)
@@ -108,7 +111,7 @@ def main():
     run_name = f"CoR_data_{args.dataset}_sampleNum_{sample_label}_sampleSeed_{args.dataset_sample_seed}_modelName_{args.model_name.lower()}"
     output_file = os.path.join(args.output_dir, run_name + ".jsonl")
     logger = initialize_logger(output_file)
-    logger.info("Start CoR | dataset=%s samples=%d/%d seed=%d model=%s", args.dataset, len(datas), total_size, args.dataset_sample_seed, args.model_name)
+    logger.info("\n===== Start CoR | dataset=%s samples=%d/%d seed=%d model=%s =====", args.dataset, len(datas), total_size, args.dataset_sample_seed, args.model_name)
 
     # 检查是否有以及处理过的样本
     previous_results = load_previous_results(output_file, question_string)

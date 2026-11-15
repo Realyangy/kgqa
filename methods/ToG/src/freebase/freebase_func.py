@@ -72,7 +72,9 @@ def execurte_sparql(sparql_query):
 
 # 去掉SPARQL查询结果中的关系前缀，仅保留关系名称
 def replace_relation_prefix(relations):
-    return [relation['relation']['value'].replace("http://rdf.freebase.com/ns/","") for relation in relations]
+    relations = [relation["relation"]["value"].replace("http://rdf.freebase.com/ns/", "") for relation in relations]
+    clean_relations = [relation for relation in relations if not relation.startswith(("http://", "https://"))]
+    return clean_relations
 
 
 # 去掉SPARQL查询结果中的实体前缀，仅保留实体ID

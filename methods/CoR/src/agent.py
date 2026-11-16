@@ -300,170 +300,42 @@ class CoRAgent:
         return prompt_template.substitute(question=question, relations=relations_str)
 
 
+    # 解析LLM关系剪枝的JSON输出
     @staticmethod
-    def _clean_relations(
-        text: str,
-        head_relations: List[str],
-        tail_relations: List[str],
-        relation_display_names: Optional[Dict[str, str]] = None,
-    ) -> Tuple[bool, Union[List[Relation], str]]:
-        payload = (text or "").strip()
-        if not payload:
+    def _clean_relations(text: str, head_relations: List[str], tail_relations: List[str]) -> Tuple[bool, Union[List[Relation], str]]:
+        if not text:
             return False, "empty output"
 
-        if not payload.startswith("[") and not payload.startswith("{"):
-            obj_start = payload.find("{")
-            obj_end = payload.rfind("}")
-            arr_start = payload.find("[")
-            arr_end = payload.rfind("]")
-            if obj_start != -1 and obj_end != -1 and obj_end > obj_start:
-                payload = payload[obj_start : obj_end + 1]
-            elif arr_start != -1 and arr_end != -1 and arr_end > arr_start:
-                payload = payload[arr_start : arr_end + 1]
-
         try:
-            items = json.loads(payload)
-        except Exception:
+            data = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
             return False, "invalid json output"
 
-        parsed_relation_ids: List[Tuple[Optional[int], int, str, Optional[float]]] = []
-        counter = 0
+        if not isinstance(data, dict):
+            return False, "json output must be an object"
 
-        def _normalize_rank(rank_raw: Any) -> Optional[int]:
-            if rank_raw is None:
-                return None
-            try:
-                rank = int(rank_raw)
-            except Exception:
-                return None
-            if rank <= 0:
-                return None
-            return rank
+        selected_ids = data.get("relation_by_relevance")
+        if not isinstance(selected_ids, list) or not all(isinstance(item, str) for item in selected_ids):
+            return False, "relation_by_relevance must be a string list"
 
-        def _normalize_score(score_raw: Any) -> Optional[float]:
-            if score_raw is None:
-                return None
-            try:
-                score = float(score_raw)
-            except Exception:
-                return None
-            if score < 0:
-                return 0.0
-            if score > 1:
-                return 1.0
-            return score
-
-        def _append_relation_id(
-            relation_id_raw: Any,
-            rank_raw: Any = None,
-            score_raw: Any = None,
-        ) -> None:
-            nonlocal counter
-            relation_id = str(relation_id_raw).strip()
-            if not relation_id:
-                return
-            rank = _normalize_rank(rank_raw)
-            score = _normalize_score(score_raw)
-            parsed_relation_ids.append((rank, counter, relation_id, score))
-            counter += 1
-
-        if isinstance(items, dict):
-            relation_by_relevance = items.get("relation_by_relevance")
-            relevance_score = items.get("relevance_score")
-
-            score_by_index: Dict[int, Optional[float]] = {}
-            if isinstance(relevance_score, list):
-                for index, score in enumerate(relevance_score):
-                    score_by_index[index] = _normalize_score(score)
-
-            if isinstance(relation_by_relevance, list):
-                for index, relation_id in enumerate(relation_by_relevance):
-                    if isinstance(relation_id, (list, tuple)):
-                        if len(relation_id) >= 1:
-                            _append_relation_id(relation_id[0], score_raw=score_by_index.get(index))
-                        continue
-                    if isinstance(relation_id, dict):
-                        _append_relation_id(
-                            relation_id.get("relation") or relation_id.get("relation_id") or relation_id.get("id"),
-                            score_raw=score_by_index.get(index),
-                        )
-                        continue
-                    _append_relation_id(relation_id, score_raw=score_by_index.get(index))
-            elif isinstance(relation_by_relevance, str):
-                _append_relation_id(relation_by_relevance, score_raw=score_by_index.get(0))
-            if not parsed_relation_ids:
-                for relation_id in items.keys():
-                    _append_relation_id(relation_id)
-        elif isinstance(items, list):
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-
-                rank_raw = item.get("rank") if "rank" in item else None
-
-                score_raw = item.get("score") if "score" in item else item.get("relevance_score")
-                if "relation_id" in item:
-                    _append_relation_id(item.get("relation_id"), rank_raw, score_raw)
-                    continue
-
-                if "relation" in item:
-                    _append_relation_id(item.get("relation"), rank_raw, score_raw)
-                    continue
-
-                if len(item) == 1:
-                    relation_id, _rationale = next(iter(item.items()))
-                    _append_relation_id(relation_id, rank_raw, score_raw)
-                    continue
-
-                if "rank" in item and len(item) == 2:
-                    for key, _value in item.items():
-                        if key == "rank":
-                            continue
-                        _append_relation_id(key, item.get("rank"), score_raw)
-                    continue
-        else:
-            return False, "json output is not an object or list"
-
-        if not parsed_relation_ids:
-            return False, "no relations found"
-
-        parsed_relation_ids.sort(key=lambda x: (x[0] if x[0] is not None else 10**9, x[1]))
-
-        relations: List[Relation] = []
+        head_set, tail_set = set(head_relations), set(tail_relations)
+        relations = []
         seen = set()
-        display_to_ids: Dict[str, List[str]] = {}
-        if relation_display_names:
-            for relation_id, display_name in relation_display_names.items():
-                name = str(display_name or "").strip()
-                if not name:
-                    continue
-                display_to_ids.setdefault(name, []).append(relation_id)
-
-        def _resolve_relation_id(candidate_id: str) -> str:
-            if candidate_id in head_relations or candidate_id in tail_relations:
-                return candidate_id
-            matched_ids = display_to_ids.get(candidate_id, [])
-            if len(matched_ids) == 1:
-                return matched_ids[0]
-            return candidate_id
-
-        for _rank, _idx, relation_id, parsed_score in parsed_relation_ids:
-            relation_id = _resolve_relation_id(relation_id)
-            if relation_id in seen:
+        for relation_id in selected_ids:
+            relation_id = relation_id.strip()
+            if not relation_id or relation_id in seen:
                 continue
-            score = parsed_score if parsed_score is not None else 0.0
-            in_head = relation_id in head_relations
-            in_tail = relation_id in tail_relations
-            if in_head:
-                relations.append(Relation(id=relation_id, score=score, left=True))
+            if relation_id in head_set:
+                relations.append(Relation(id=relation_id, score=0.0, left=True))
                 seen.add(relation_id)
-            elif in_tail:
-                relations.append(Relation(id=relation_id, score=score, left=False))
+            elif relation_id in tail_set:
+                relations.append(Relation(id=relation_id, score=0.0, left=False))
                 seen.add(relation_id)
-
         if not relations:
             return False, "no relations found"
+
         return True, relations
+
 
     @staticmethod
     def _try_parse_reasoning_json(text: str) -> Optional[Dict[str, Any]]:
@@ -638,7 +510,7 @@ class CoRAgent:
             warnings.append("LLM returned empty response.")
         else:
             # 解析LLM的输出，并对选择后的关系集合进行截断
-            flag, parsed = self._clean_relations(response, head_relations, tail_relations, names)
+            flag, parsed = self._clean_relations(response, head_relations, tail_relations)
             if not flag or not isinstance(parsed, list):
                 warnings.append(f"Failed to parse relation prune result: {parsed}")
             else:

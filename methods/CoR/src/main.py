@@ -54,8 +54,8 @@ def normalize_topic_entities(raw_topic_entities):
 
 
 # 为每题保存详细信息
-def save_detail(output_dir, run_name, question_id, data, question, result, prompt_history, sparql_history):
-    detail_dir = Path(output_dir) / "details" / run_name
+def save_detail(run_dir, question_id, data, question, result, prompt_history, sparql_history):
+    detail_dir = Path(run_dir) / "details"
     detail_dir.mkdir(parents=True, exist_ok=True)
     safe_id = re.sub(r"[^\w.\-]", "_", str(question_id))
     detail = {
@@ -80,7 +80,7 @@ def main():
     parser.add_argument("--dataset_sample_num", type=sample_count, default=500)
     parser.add_argument("--dataset_sample_seed", type=int, default=42)
     parser.add_argument("--model_name", choices=MODELS_DICT.keys(), default="DeepSeekV4.1-Flash")
-    parser.add_argument("--max_length", type=int, default=512)
+    parser.add_argument("--max_length", type=int, default=1024)
     parser.add_argument("--temperature_exploration", type=float, default=0.3)
     parser.add_argument("--temperature_reasoning", type=float, default=0.1)
     parser.add_argument("--width", type=int, default=3)
@@ -106,10 +106,12 @@ def main():
         indices = sorted(random.Random(args.dataset_sample_seed).sample(range(total_size), args.dataset_sample_num))
         datas = [datas[index] for index in indices]
 
-    # 构造运行文件名称
+    # 构造运行文件名称和实验目录
     sample_label = "all" if args.dataset_sample_num is None else args.dataset_sample_num
     run_name = f"CoR_data_{args.dataset}_sampleNum_{sample_label}_sampleSeed_{args.dataset_sample_seed}_modelName_{args.model_name.lower()}"
-    output_file = os.path.join(args.output_dir, run_name + ".jsonl")
+    run_dir = Path(args.output_dir) / run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    output_file = str(run_dir / f"{run_name}.jsonl")
     logger = initialize_logger(output_file)
     logger.info("\n===== Start CoR | dataset=%s samples=%d/%d seed=%d model=%s =====", args.dataset, len(datas), total_size, args.dataset_sample_seed, args.model_name)
 
@@ -160,7 +162,7 @@ def main():
             # 必要时记录详细信息
             if args.save_detail:
                 try:
-                    save_detail(args.output_dir, run_name, question_id, data, question, result, prompt_history, sparql_history)
+                    save_detail(run_dir, question_id, data, question, result, prompt_history, sparql_history)
                 except Exception:
                     logger.exception("Failed to save detail for question=%s", question)
             logger.info("CoR complete | action=%s answers=%s calls=%d", result.get("action"), predictions, agent.llm_api.call_num)

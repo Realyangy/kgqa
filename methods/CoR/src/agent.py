@@ -1,4 +1,3 @@
-import re
 import json
 import logging
 from string import Template
@@ -338,25 +337,6 @@ class CoRAgent:
 
 
     @staticmethod
-    def _try_parse_reasoning_json(text: str) -> Optional[Dict[str, Any]]:
-        if not text:
-            return None
-
-        candidates: List[str] = [text.strip()]
-        fenced_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
-        candidates.extend(block.strip() for block in fenced_blocks if block.strip())
-        candidates.extend(match.group(0) for match in re.finditer(r"\{[\s\S]*?\}", text))
-
-        for candidate in candidates:
-            try:
-                parsed = json.loads(candidate)
-            except Exception:
-                continue
-            if isinstance(parsed, dict):
-                return parsed
-        return None
-
-    @staticmethod
     def build_reasoning_prompt(
         question: str,
         topic_entity: Entity,
@@ -383,47 +363,45 @@ class CoRAgent:
         prompt = prompt_template.substitute(question=question, reasoning_path=reasoning_path_str)
         return prompt, candidate_size, filtered_candidate_size
 
-    @staticmethod
-    def _normalize_decision(decision_raw: Any) -> Optional[str]:
-        if decision_raw is None:
-            return None
-        decision = str(decision_raw).strip().lower()
-        if decision in {"forward", "backtrack", "constraint", "filter", "stop", "yes", "no"}:
-            return decision
-        return None
 
+    # 解析路径推理的JSON输出
     @staticmethod
     def _extract_reasoning_answer(text: str) -> Tuple[Optional[str], List[str]]:
-        parsed_json = CoRAgent._try_parse_reasoning_json(text)
-        if parsed_json is not None:
-            raw_decision = parsed_json.get("decision")
-            decision = CoRAgent._normalize_decision(raw_decision)
+        if not text:
+            return None, []
 
-            raw_answers = parsed_json.get("answer", [])
-            answers: List[str] = []
-            if isinstance(raw_answers, list):
-                answers = [str(item).strip() for item in raw_answers if str(item).strip()]
-            return decision, answers
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return None, []
 
-        return None, []
+        if not isinstance(data, dict):
+            return None, []
 
+        decision = data.get("decision")
+        answers = data.get("answer")
+        if not isinstance(decision, str) or not isinstance(answers, list):
+            return None, []
+
+        decision = decision.strip().lower()
+        if decision not in ("stop", "filter", "forward", "backtrack"):
+            return None, []
+        if not all(isinstance(item, str) for item in answers):
+            return None, []
+
+        return decision, [item.strip() for item in answers if item.strip()]
+    
+
+    # 将LLM的决策映射为CoR的Action
     @staticmethod
     def _decision_to_action(decision: Optional[str]) -> str:
-        if decision == "stop":
-            return "Stop"
-        if decision == "forward":
-            return "Forward"
-        if decision == "constraint":
-            return "Constraint"
-        if decision == "filter":
-            return "Constraint"
-        if decision == "backtrack":
-            return "Backtrack"
-        if decision == "yes":
-            return "Stop"
-        if decision == "no":
-            return "Forward"
-        return "UnknownAction"
+        action_mapping = {
+            "stop": "Stop",
+            "filter": "Constraint",
+            "forward": "Forward",
+            "backtrack": "Backtrack"
+        }
+        return action_mapping.get(decision, "UnknownAction")
 
 
     # 解析约束过滤和直接回答的JSON输出
@@ -605,6 +583,11 @@ class CoRAgent:
                 warnings.append("Failed to parse decision from reasoning response JSON.")
             if action == "UnknownAction":
                 warnings.append("Failed to map reasoning output to valid action.")
+                if decision == "stop" and not answers:
+                    warnings.append("Stop decision returned an empty answer list.")
+                elif decision in ("filter", "forward", "backtrack") and answers:
+                    warnings.append("Non-stop decision returned a non-empty answer list.")
+
         prompt_history.append(self._with_trace({
             "type": "reasoning",
             "prompt": prompt,

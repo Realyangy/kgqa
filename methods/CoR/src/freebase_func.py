@@ -13,6 +13,7 @@ SPARQL_LABEL_BATCH_SIZE = int(os.getenv("FREEBASE_LABEL_BATCH_SIZE", "100"))
 _FREEBASE_URI_PREFIX = "http://rdf.freebase.com/ns/"
 _ID2NAME_CACHE: Dict[str, str] = {}
 
+
 # 查询关系
 sparql_relations = """PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?relation
@@ -45,6 +46,19 @@ WHERE {
 } LIMIT 1
 """
 
+# 批量根据实体ID查询实体名称
+sparql_ids2names = """PREFIX ns: <http://rdf.freebase.com/ns/>
+SELECT DISTINCT ?entity ?targetEntity
+WHERE {
+    VALUES ?entity { %s }
+    OPTIONAL {
+        ?entity ns:type.object.name ?targetEntity .
+        FILTER (lang(?targetEntity) = '' OR langMatches(lang(?targetEntity), 'en'))
+    }
+}
+"""
+
+
 # 构造关系查询的SPARQL
 def build_sparql_relations(query):
     return sparql_relations % query
@@ -74,17 +88,10 @@ def _label_rank(lang: str) -> int:
     return 2
 
 
+# 构造批量查询实体名称的SPARQL
 def _render_ids2names_query(entity_ids: List[str]) -> str:
     values_clause = " ".join(f"ns:{entity_id}" for entity_id in entity_ids)
-    return f"""PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?entity ?targetEntity
-WHERE {{
-VALUES ?entity {{ {values_clause} }}
-OPTIONAL {{
-	?entity ns:type.object.name ?targetEntity .
-	FILTER (lang(?targetEntity) = '' OR langMatches(lang(?targetEntity), 'en'))
-}}
-}}"""
+    return sparql_ids2names % values_clause
 
 
 def execurte_sparql(sparql_txt):
@@ -151,22 +158,19 @@ def replace_relation_prefix(relations):
     return clean_relations
 
 
+# 区分字面量和实体ID，并删除实体ID的前缀
 def replace_entities_prefix(entities):
-    literal_entities = []
-    uri_entities = []
-
+    literal_entities, uri_entities = [], []
     for entity in entities:
         binding = entity.get("targetEntity", {})
         binding_type = binding.get("type", "")
         value = str(binding.get("value", "")).strip()
         if not value:
             continue
-
         if binding_type in ("literal", "typed-literal"):
             literal_entities.append(value)
         elif binding_type == "uri":
             uri_entities.append(value.replace("http://rdf.freebase.com/ns/", ""))
-
     return literal_entities, uri_entities
 
 
@@ -218,6 +222,7 @@ def id2entity_name_or_type(entity_id):
     return "UnName_Entity"
 
 
+# 根据实体ID查询名称
 def id2entity_names(entity_ids: List[str]) -> Dict[str, str]:
     clean_ids: List[str] = []
     seen = set()
@@ -233,31 +238,26 @@ def id2entity_names(entity_ids: List[str]) -> Dict[str, str]:
 
     result: Dict[str, str] = {}
     pending_ids: List[str] = []
+
+    # 在_ID2NAME_CACH中检查是否已经查询过entity_id
     for entity_id in clean_ids:
+        # 如果有，直接放进本次查询结果result
         if entity_id in _ID2NAME_CACHE:
             result[entity_id] = _ID2NAME_CACHE[entity_id]
+        # 没有则放入pending_ids，随后查询
         else:
             pending_ids.append(entity_id)
 
+    # 查询
     if pending_ids:
         batch_size = max(1, SPARQL_LABEL_BATCH_SIZE)
         total_batches = (len(pending_ids) + batch_size - 1) // batch_size
-        logging.info(
-            "[Freebase][id2entity_names] start batch lookup | total_entities=%s | batch_size=%s | total_batches=%s",
-            len(pending_ids),
-            batch_size,
-            total_batches,
-        )
+        logging.info("[Freebase][id2entity_names] start batch lookup | total_entities=%s | batch_size=%s | total_batches=%s", len(pending_ids), batch_size, total_batches)
 
         unresolved: List[str] = []
         for batch_index, start in enumerate(range(0, len(pending_ids), batch_size), start=1):
             chunk = pending_ids[start : start + batch_size]
-            logging.info(
-                "[Freebase][id2entity_names] processing batch %s/%s | batch_entities=%s",
-                batch_index,
-                total_batches,
-                len(chunk),
-            )
+            logging.info("[Freebase][id2entity_names] processing batch %s/%s | batch_entities=%s", batch_index, total_batches, len(chunk))
 
             query = _render_ids2names_query(chunk)
             meta = execurte_sparql_with_meta(query)
@@ -312,6 +312,7 @@ def build_relation_extract(topic_entity_id: str, relation_chain: List[Relation])
     return relation_extract, last_entity
 
 
+# 检查实体查询结果中是否有自带实体名称的结果，从targetEntityLabel中将其名称提取出来
 def extract_inline_entity_labels(rows: List[Dict]) -> Dict[str, str]:
     label_map: Dict[str, str] = {}
     for row in rows:
@@ -328,13 +329,13 @@ def extract_inline_entity_labels(rows: List[Dict]) -> Dict[str, str]:
     return label_map
 
 
+# 根据起点实体和关系链生成用于查询末端实体的SPARQL查询片段
 def build_entities_extract(topic_entity: Entity, relation_chain: List[Relation]) -> Tuple[str, str]:
     if not relation_chain:
         return "", "relation_chain is empty"
 
     sparql_entities_extract = ""
     last_entity = f"ns:{topic_entity.id}"
-
     for index, relation in enumerate(relation_chain, start=1):
         is_last = index == len(relation_chain)
         if is_last:
@@ -343,7 +344,6 @@ def build_entities_extract(topic_entity: Entity, relation_chain: List[Relation])
             next_entity = f"?e_{index}"
 
         relation_node = f"ns:{relation.id}"
-
         if relation.left:
             sparql_entities_extract += f"{last_entity} {relation_node} {next_entity} .\n"
         else:

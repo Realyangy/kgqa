@@ -676,28 +676,44 @@ class CoRAgent:
         }))
         return selected
 
+
+    # 实体检索
     def entity_search(self, topic_entity, relation_chain, sparql_history):
+        # 生成SAPRQL查询片段
         extract, err = freebase_func.build_entities_extract(topic_entity, relation_chain)
         if err:
-            sparql_history.append(self._with_trace({"search_type": "entity_search", "sparql": "", "result_count": 0,
-                "status": "error", "timed_out": False, "filter_caused_empty": False}))
+            sparql_history.append(self._with_trace({
+                "search_type": "entity_search",
+                "sparql": "",
+                "result_count": 0,
+                "status": "error",
+                "timed_out": False,
+                "filter_caused_empty": False
+            }))
             return [], [], []
+
+        # 构造完整实体查询SPARQL
         query = freebase_func.build_sparql_entities(extract)
         meta = freebase_func.execurte_sparql_with_meta(query)
+
+        # 提取查询结果并处理
         rows = meta.get("rows", []) or []
-        literals, ids = freebase_func.replace_entities_prefix(rows) if rows else ([], [])
-        labels = freebase_func.extract_inline_entity_labels(rows) if rows else {}
-        ids = [entity for entity in ids if entity.startswith("m.")]
-        missing = [entity for entity in dict.fromkeys(ids) if entity not in labels]
+        literals, ids = freebase_func.replace_entities_prefix(rows) if rows else ([], []) # 区分字面量和实体ID
+        ids = [entity for entity in ids if entity.startswith(("m.", "g."))] # 保留m.和g.开头的实体
+        entity_ids_to_resolve = list(dict.fromkeys(ids)) # 保持顺序且去重 
+
         names_by_id = {}
-        if missing:
-            logging.info("[EntitySearch] need resolve names | total_entities=%s", len(missing))
+        if entity_ids_to_resolve:
+            logging.info("[EntitySearch] need resolve names | total_entities=%s", len(entity_ids_to_resolve))
             try:
-                names_by_id = freebase_func.id2entity_names(missing)
+                names_by_id = freebase_func.id2entity_names(entity_ids_to_resolve)
             except Exception:
                 pass
-        names = [str(labels.get(entity, "")).strip() or str(names_by_id.get(entity, "")).strip()
-                 or freebase_func.id2entity_name_or_type(entity) for entity in ids]
+        names = [
+            str(names_by_id.get(entity, "")).strip()
+            or freebase_func.id2entity_name_or_type(entity)
+            for entity in ids
+        ]
         filtered = [(entity, name) for entity, name in zip(ids, names) if name != "UnName_Entity"]
         ids, names = [x[0] for x in filtered], [x[1] for x in filtered]
         sparql_history.append(self._with_trace({"search_type": "entity_search", "sparql": query,
@@ -785,22 +801,16 @@ class CoRAgent:
         self._reset_trace()
 
         root_entity = normalized_entities[0]
-        # logging.info(
-        #     "[CoR] Start question | root=%s(%s) | width=%s depth=%s",
-        #     root_entity.name,
-        #     root_entity.id,
-        #     self.relation_width,
-        #     self.depth,
-        # )
         stack = [(root_entity, [root_entity], 0)]
         while stack:
             # 从栈中取出第一个元素
             node, current_path, current_depth = stack.pop()
 
+            # 未扩展过时，取出的是起点实体
             if isinstance(node, Entity):
                 relation_chain: List[Relation] = [item for item in current_path[1:] if isinstance(item, Relation)]
                 chain_sig = self._relation_chain_signature(relation_chain)
-                logging.info("[depth=%s] %s | chain=%s", current_depth, node.name, chain_sig)
+                logging.info("[depth=%s] stack pop done: %s | chain=%s", current_depth, node.name, chain_sig)
                 
                 # 关系中心的关系搜索
                 sparql_before = len(sparql_history)
@@ -809,7 +819,7 @@ class CoRAgent:
                     relation_chain=relation_chain,
                     sparql_history=sparql_history,
                 )
-                logging.info("[depth=%s] relation_search done | num of head relation = %s num of tail relation = %s | chain=%s", current_depth, len(head_relations), len(tail_relations), chain_sig)
+                logging.info("[depth=%s] relation_search done: num of head relation = %s num of tail relation = %s | chain=%s", current_depth, len(head_relations), len(tail_relations), chain_sig)
                 
                 # 记录SPARQL查询历史
                 for event in sparql_history[sparql_before:]:
@@ -844,8 +854,8 @@ class CoRAgent:
                     tail_relations=tail_relations,
                 )
 
-                selected_relations = [f"{item.id}({'head' if item.left else 'tail'})" for item in selected_relations]
-                logging.info("[depth=%s] relation_prune selected:\n%s\nchain=%s", current_depth, '\n'.join(selected_relations), chain_sig)
+                selected_relations_list = [f"{item.id}({'head' if item.left else 'tail'})" for item in selected_relations]
+                logging.info("[depth=%s] relation_prune done, selected:\n%s\nchain=%s", current_depth, '\n'.join(selected_relations_list), chain_sig)
 
                 # 将剪枝后的关系反向压入栈，作为后续搜索的起点，并开始下一轮的搜索
                 if current_depth < self.depth:
@@ -853,11 +863,13 @@ class CoRAgent:
                         stack.append((relation, current_path + [relation], current_depth + 1))
                 continue
 
-
+            # 经过一轮扩展后，从栈中取出的应该都是关系了
             if isinstance(node, Relation):
+                # 取出当前路径current_path中除第一个元素（起点实体）之外的其他元素（关系）
                 relation_chain: List[Relation] = [item for item in current_path[1:] if isinstance(item, Relation)]
                 chain_sig = self._relation_chain_signature(relation_chain)
-                logging.info("[CoR][depth=%s] Relation node | chain=%s", current_depth, chain_sig)
+                logging.info("[depth=%s] stack pop done: chain=%s", current_depth, chain_sig)
+
                 sparql_before = len(sparql_history)
                 reasoning_answers: List[str] = []
                 entity_ids, entity_names, literal_candidates = self.entity_search(
@@ -865,13 +877,8 @@ class CoRAgent:
                     relation_chain=relation_chain,
                     sparql_history=sparql_history,
                 )
-                logging.info(
-                    "[CoR][depth=%s] entity_search done | entities=%s literals=%s | chain=%s",
-                    current_depth,
-                    len(entity_ids),
-                    len(literal_candidates),
-                    chain_sig,
-                )
+                logging.info("[depth=%s] entity_search done | entities=%s literals=%s | chain=%s", current_depth, len(entity_ids), len(literal_candidates), chain_sig)
+                
                 for event in sparql_history[sparql_before:]:
                     step = self._sparql_event_to_step(event)
                     if step is not None:

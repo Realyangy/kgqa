@@ -248,36 +248,43 @@ def id2entity_names(entity_ids: List[str]) -> Dict[str, str]:
         else:
             pending_ids.append(entity_id)
 
-    # 查询
     if pending_ids:
         batch_size = max(1, SPARQL_LABEL_BATCH_SIZE)
         total_batches = (len(pending_ids) + batch_size - 1) // batch_size
         logging.info("[Freebase][id2entity_names] start batch lookup | total_entities=%s | batch_size=%s | total_batches=%s", len(pending_ids), batch_size, total_batches)
 
         unresolved: List[str] = []
+        # 批量查询
         for batch_index, start in enumerate(range(0, len(pending_ids), batch_size), start=1):
             chunk = pending_ids[start : start + batch_size]
             logging.info("[Freebase][id2entity_names] processing batch %s/%s | batch_entities=%s", batch_index, total_batches, len(chunk))
 
+            # 构造当前批次的查询并执行
             query = _render_ids2names_query(chunk)
             meta = execurte_sparql_with_meta(query)
             rows = meta.get("rows", []) or []
 
             best: Dict[str, Tuple[int, str]] = {}
             for row in rows:
+                # 取出实体ID
                 entity_uri = str(row.get("entity", {}).get("value", "")).strip()
                 entity_id = _normalize_entity_uri(entity_uri)
                 if not entity_id:
                     continue
+
+                # 取出实体名称
                 label_binding = row.get("targetEntity", {})
                 label = str(label_binding.get("value", "")).strip()
                 if not label:
                     continue
+
+                # 根据定义的语言顺序决定使用什么语言作为实体名称，最优选择是英语
                 rank = _label_rank(str(label_binding.get("xml:lang", "")))
                 previous = best.get(entity_id)
                 if previous is None or rank < previous[0]:
                     best[entity_id] = (rank, label)
 
+            # 记录当前批次中未查询到名称的实体
             for entity_id in chunk:
                 if entity_id in best:
                     resolved = best[entity_id][1]
@@ -286,6 +293,7 @@ def id2entity_names(entity_ids: List[str]) -> Dict[str, str]:
                 else:
                     unresolved.append(entity_id)
 
+        # 对所有批次中查询失败的实体再次查询名称
         for entity_id in unresolved:
             resolved = id2entity_name_or_type(entity_id)
             result[entity_id] = resolved

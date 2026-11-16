@@ -118,12 +118,10 @@ class CoRAgent:
 
         return results
 
+
+    # 将LLM给出的答案名称尽可能映射回候选实体的ID，整理成结果列表
     @staticmethod
-    def _map_answer_names_to_results(
-        answer_names: List[str],
-        entity_ids: List[str],
-        entity_names: List[str],
-    ) -> List[Dict[str, str]]:
+    def _map_answer_names_to_results(answer_names: List[str], entity_ids: List[str], entity_names: List[str]) -> List[Dict[str, str]]:
         name_to_id: Dict[str, str] = {}
         for entity_id, entity_name in zip(entity_ids, entity_names):
             name = str(entity_name).strip()
@@ -144,6 +142,7 @@ class CoRAgent:
             results.append({"id": item_id, "name": name})
 
         return results
+
 
     # 归一化所有起点实体
     @staticmethod
@@ -709,24 +708,31 @@ class CoRAgent:
                 names_by_id = freebase_func.id2entity_names(entity_ids_to_resolve)
             except Exception:
                 pass
-        names = [
-            str(names_by_id.get(entity, "")).strip()
-            or freebase_func.id2entity_name_or_type(entity)
-            for entity in ids
-        ]
+        names = [str(names_by_id.get(entity, "")).strip() or freebase_func.id2entity_name_or_type(entity) for entity in ids]
+
+        # 过滤无名称实体，并保持实体ID和名称对应
         filtered = [(entity, name) for entity, name in zip(ids, names) if name != "UnName_Entity"]
         ids, names = [x[0] for x in filtered], [x[1] for x in filtered]
-        sparql_history.append(self._with_trace({"search_type": "entity_search", "sparql": query,
-            "result_count": len(rows), "status": str(meta.get("status", "ok")),
+
+        sparql_history.append(self._with_trace({
+            "search_type": "entity_search",
+            "sparql": query,
+            "result_count": len(rows),
+            "status": str(meta.get("status", "ok")),
             "timed_out": bool(meta.get("timed_out", False)),
-            "filter_caused_empty": len(rows) > 0 and len(ids) + len(literals) == 0}))
+            "filter_caused_empty": len(rows) > 0 and len(ids) + len(literals) == 0
+        }))
         return ids, names, literals
 
+
+    # 根据当前关系链完成论文中的两次问题回答，通过一次LLM调用完成
     def reasoning(self, question, topic_entity, relation_chain, target_entity_candidates, prompt_history, candidate_maxsize=None):
+
+        # 推理，让LLM判断当前关系链是否正确，论文中是让LLM判断关系链末端的实体空间是否可能包含答案，这里实现时直接会给出具体的末端实体集合
         names = {str(r.id): str(r.id) for r in relation_chain}
-        prompt, size, filtered = self.build_reasoning_prompt(question, topic_entity, relation_chain, target_entity_candidates,
-            reasoning_user_prompt, names, candidate_maxsize)
+        prompt, size, filtered = self.build_reasoning_prompt(question, topic_entity, relation_chain, target_entity_candidates, reasoning_user_prompt, names, candidate_maxsize)
         response, usage = self.llm_api.generate(prompt, self.temperature_reasoning, self.max_token, reasoning_system_prompt.substitute())
+        
         warnings = []
         decision, answers = self._extract_reasoning_answer(response) if response else (None, [])
         action = self._decision_to_action(decision)
@@ -737,16 +743,28 @@ class CoRAgent:
                 warnings.append("Failed to parse decision from reasoning response JSON.")
             if action == "UnknownAction":
                 warnings.append("Failed to map reasoning output to valid action.")
-        prompt_history.append(self._with_trace({"type": "reasoning", "prompt": prompt, "response": response,
-            "decision": decision, "answers": answers, "parsed_result": action, "candidate_size": size,
-            "filtered_candidate_size": filtered, "input_tokens": usage.get("input_tokens", -1),
-            "output_tokens": usage.get("output_tokens", -1), "warnings": warnings}))
+        prompt_history.append(self._with_trace({
+            "type": "reasoning",
+            "prompt": prompt,
+            "response": response,
+            "decision": decision,
+            "answers": answers,
+            "parsed_result": action,
+            "candidate_size": size,
+            "filtered_candidate_size": filtered,
+            "input_tokens": usage.get("input_tokens", -1),
+            "output_tokens": usage.get("output_tokens", -1),
+            "warnings": warnings
+        }))
         return (action, response, answers) if response else (None, None, [])
 
+
+    # 调用LLM，让其从候选实体集合中根据约束筛选答案
     def validate(self, question, topic_entity, relation_chain, target_entity_names, prompt_history):
         names = {str(r.id): str(r.id) for r in relation_chain}
         prompt, size, filtered = self.build_reasoning_prompt(question, topic_entity, relation_chain, target_entity_names, filter_user_prompt, names)
         response, usage = self.llm_api.generate(prompt, self.temperature_reasoning, self.max_token, filter_system_prompt.substitute())
+        
         warnings = []
         if not response:
             warnings.append("LLM returned empty response.")
@@ -755,11 +773,19 @@ class CoRAgent:
             success, result = self._extract_filter_answer(response)
             if not success:
                 warnings.append("Failed to parse answer from response (expected JSON answer list or legacy braced answer).")
-        prompt_history.append(self._with_trace({"type": "filter_answer", "prompt": prompt,
-            "input_tokens": usage.get("input_tokens", -1), "output_tokens": usage.get("output_tokens", -1),
-            "candidate_size": size, "filtered_candidate_size": filtered, "response": response,
-            "parsed_result": result, "warnings": warnings}))
+        prompt_history.append(self._with_trace({
+            "type": "filter_answer",
+            "prompt": prompt,
+            "input_tokens": usage.get("input_tokens", -1),
+            "output_tokens": usage.get("output_tokens", -1),
+            "candidate_size": size,
+            "filtered_candidate_size": filtered,
+            "response": response,
+            "parsed_result": result,
+            "warnings": warnings
+        }))
         return result if result else None
+
 
     def generate_directly(self, question, prompt_history):
         prompt = generate_directly_user_prompt.substitute(question=question)
@@ -870,6 +896,7 @@ class CoRAgent:
                 chain_sig = self._relation_chain_signature(relation_chain)
                 logging.info("[depth=%s] stack pop done: chain=%s", current_depth, chain_sig)
 
+                # 关系链的末端实体查询
                 sparql_before = len(sparql_history)
                 reasoning_answers: List[str] = []
                 entity_ids, entity_names, literal_candidates = self.entity_search(
@@ -878,21 +905,18 @@ class CoRAgent:
                     sparql_history=sparql_history,
                 )
                 logging.info("[depth=%s] entity_search done | entities=%s literals=%s | chain=%s", current_depth, len(entity_ids), len(literal_candidates), chain_sig)
-                
                 for event in sparql_history[sparql_before:]:
                     step = self._sparql_event_to_step(event)
                     if step is not None:
                         step_history.append(step)
 
+                # 没有查询到末端实体时，根据深度决定当前关系链需要回溯（超过最大深度时）还是继续搜索（未超过时）
                 if len(entity_ids) + len(literal_candidates) == 0:
                     action = "Backtrack" if current_depth >= self.depth else "Forward"
                     response = None
-                    logging.info(
-                        "[CoR][depth=%s] empty candidates => action=%s | chain=%s",
-                        current_depth,
-                        action,
-                        chain_sig,
-                    )
+                    logging.info("[depth=%s] empty candidates => action=%s | chain=%s", current_depth, action, chain_sig)
+
+                # 查询到末端实体时进行推理
                 else:
                     joint_entity_candidates = entity_names + literal_candidates
                     prompt_before = len(prompt_history)
@@ -905,13 +929,7 @@ class CoRAgent:
                     )
                     for event in prompt_history[prompt_before:]:
                         step_history.append(self._llm_event_to_step(event))
-                    logging.info(
-                        "[CoR][depth=%s] reasoning action=%s | candidates=%s | chain=%s",
-                        current_depth,
-                        action,
-                        len(joint_entity_candidates),
-                        chain_sig,
-                    )
+                    logging.info("[depth=%s] reasoning action=%s | candidates=%s | chain=%s", current_depth, action, len(joint_entity_candidates), chain_sig)
 
                 if action is None:
                     return {
@@ -924,7 +942,10 @@ class CoRAgent:
                         "step_history": step_history,
                     }
 
+                # (1)推理结果是stop时，LLM认为当前关系链信息足够回答问题，可以停止流程进行问题回答
                 if action.lower() == "stop":
+
+                    # LLM给出答案时，提取并整理
                     if reasoning_answers:
                         answer = reasoning_answers
                         result_items = self._map_answer_names_to_results(
@@ -932,6 +953,8 @@ class CoRAgent:
                             entity_ids=entity_ids,
                             entity_names=entity_names,
                         )
+                    
+                    # LLM没有给出答案时，将查询到的实体和字面量合并作为答案，并整理格式
                     else:
                         answer = entity_names + literal_candidates
                         result_items = self._build_result_items(
@@ -939,6 +962,8 @@ class CoRAgent:
                             entity_names=entity_names,
                             literal_candidates=literal_candidates,
                         )
+
+                    # 生成推理链，也就是组合以上作为答案的实体和之前的关系链
                     reasoning_chain_str = self._reasoning_path_to_str(
                         topic_entity=root_entity,
                         relation_chain=relation_chain,
@@ -954,11 +979,13 @@ class CoRAgent:
                         "step_history": step_history,
                     }
 
+                # (2)推理结果是constraint时，LLM认为当前关系链已经到达答案实体空间，但是需要进一步解决部分约束
                 if action.lower() == "constraint":
-                    logging.info("[CoR][depth=%s] enter constraint filter | chain=%s", current_depth, chain_sig)
+                    logging.info("[depth=%s] enter constraint filter | chain=%s", current_depth, chain_sig)
                     joint_entity_candidates = entity_names + literal_candidates
+
+                    # 调用LLM解决额外约束
                     filter_response = self.validate(
-                        # filter step is appended immediately after call
                         question=question,
                         topic_entity=root_entity,
                         relation_chain=relation_chain,
@@ -969,9 +996,11 @@ class CoRAgent:
                         last_event = prompt_history[-1]
                         if last_event.get("type") == "filter_answer":
                             step_history.append(self._llm_event_to_step(last_event))
+
+                    # 提取答案，生成推理链
                     result = self._split_answers(filter_response or "")
                     if result:
-                        logging.info("[CoR][depth=%s] filter accepted answers=%s | chain=%s", current_depth, len(result), chain_sig)
+                        logging.info("[depth=%s] filter accepted answers=%s | chain=%s", current_depth, len(result), chain_sig)
                         mapped_results = self._map_answer_names_to_results(
                             answer_names=result,
                             entity_ids=entity_ids,
@@ -991,17 +1020,24 @@ class CoRAgent:
                             "sparql_history": sparql_history,
                             "step_history": step_history,
                         }
-                    logging.info("[CoR][depth=%s] filter returned empty, break search | chain=%s", current_depth, chain_sig)
-                    break
 
+                    # validate未能获取答案时，退出stack循环，使用兜底回答
+                    else:
+                        logging.info("[depth=%s] filter returned empty, break search | chain=%s", current_depth, chain_sig)
+                        break
+
+                # (3)推理结果是forward时，LLM认为当前关系链正确，但是未探索完全，需要继续往前探索，会再往前进行一轮关系剪枝，为下一轮构造起点关系链
                 if action.lower() == "forward":
-                    logging.info("[CoR][depth=%s] continue forward | chain=%s", current_depth, chain_sig)
+                    logging.info("[depth=%s] continue forward | chain=%s", current_depth, chain_sig)
+
+                    # 当前关系链无法继续探索时，不再探索，继续下一条关系链
                     if current_depth >= self.depth:
-                        logging.info("[CoR][depth=%s] reached max depth, skip forward | chain=%s", current_depth, chain_sig)
+                        logging.info("[depth=%s] reached max depth, skip forward | chain=%s", current_depth, chain_sig)
                         continue
+
+                    # 根据"起点实体+关系链"进行关系扩展
                     sparql_before_forward = len(sparql_history)
                     head_relations, tail_relations = self.relation_search(
-                        # relation_search steps are appended immediately after call
                         topic_entity=root_entity,
                         relation_chain=relation_chain,
                         sparql_history=sparql_history,
@@ -1011,9 +1047,10 @@ class CoRAgent:
                         if step is not None:
                             step_history.append(step)
                     if not head_relations and not tail_relations:
-                        logging.info("[CoR][depth=%s] forward relation_search empty | chain=%s", current_depth, chain_sig)
+                        logging.info("[depth=%s] forward relation_search empty | chain=%s", current_depth, chain_sig)
                         continue
 
+                    # 对候选关系进行关系剪枝，扩展合适的关系作为后续的结果
                     prompt_before = len(prompt_history)
                     selected_relations = self.relation_prune(
                         question=question,
@@ -1031,20 +1068,26 @@ class CoRAgent:
                         head_relations=head_relations,
                         tail_relations=tail_relations,
                     )
+
+                    # 将剪枝后的关系压入栈
                     if current_depth < self.depth:
                         for relation in reversed(selected_relations):
                             stack.append((relation, current_path + [relation], current_depth + 1))
                     continue
 
+
+                # (4)推理结果是backtrack时，不再探索当前关系
                 if action.lower() == "backtrack":
-                    logging.info("[CoR][depth=%s] backtrack | chain=%s", current_depth, chain_sig)
+                    logging.info("[depth=%s] backtrack | chain=%s", current_depth, chain_sig)
                     continue
 
+                # LLM输出的action出现错误，不是以上四种中的任意一种时，跳过当前推理
                 logging.warning(f"Unknown action from reasoning: {action}, raw={response}")
                 continue
 
+        # 兜底，直接调用LLM回答问题
         prompt_before = len(prompt_history)
-        logging.info("[CoR] DFS ended without final answer, fallback to generate_directly")
+        logging.info(" DFS ended without final answer, fallback to generate_directly")
         generated = self.generate_directly(question=question, prompt_history=prompt_history)
         for event in prompt_history[prompt_before:]:
             step_history.append(self._llm_event_to_step(event))

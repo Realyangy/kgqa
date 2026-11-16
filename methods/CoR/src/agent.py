@@ -583,10 +583,10 @@ class CoRAgent:
                 warnings.append("Failed to parse decision from reasoning response JSON.")
             if action == "UnknownAction":
                 warnings.append("Failed to map reasoning output to valid action.")
-                if decision == "stop" and not answers:
-                    warnings.append("Stop decision returned an empty answer list.")
-                elif decision in ("filter", "forward", "backtrack") and answers:
-                    warnings.append("Non-stop decision returned a non-empty answer list.")
+            if decision == "stop" and not answers:
+                warnings.append("Stop decision returned an empty answer list.")
+            elif decision in ("filter", "forward", "backtrack") and answers:
+                warnings.append("Non-stop decision returned a non-empty answer list.")
 
         prompt_history.append(self._with_trace({
             "type": "reasoning",

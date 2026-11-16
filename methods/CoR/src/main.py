@@ -75,12 +75,12 @@ def disable_net_proxy():
 
 def main():
     parser = argparse.ArgumentParser(description="CoR Freebase KGQA baseline")
-    parser.add_argument("--data_dir", default="/home/flyvideo/Sata2/lyy/kgqa/data/test")
+    parser.add_argument("--data_dir", default="../../data/test")
     parser.add_argument("--dataset", choices=["cwq", "webqsp", "grailqa"], default="cwq")
     parser.add_argument("--dataset_sample_num", type=sample_count, default=500)
     parser.add_argument("--dataset_sample_seed", type=int, default=42)
     parser.add_argument("--model_name", choices=MODELS_DICT.keys(), default="DeepSeekV4.1-Flash")
-    parser.add_argument("--max_length", type=int, default=1024)
+    parser.add_argument("--max_length", type=int, default=512)
     parser.add_argument("--temperature_exploration", type=float, default=0.3)
     parser.add_argument("--temperature_reasoning", type=float, default=0.1)
     parser.add_argument("--width", type=int, default=3)
@@ -89,7 +89,7 @@ def main():
     parser.add_argument("--sample_relation_threshold", type=int, default=1000)
     parser.add_argument("--remove_unnecessary_rel", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save_detail", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--output_dir", default=str(Path(__file__).resolve().parents[1] / "output"))
+    parser.add_argument("--output_dir", default="../output")
     args = parser.parse_args()
 
     model_config = MODELS_DICT[args.model_name]

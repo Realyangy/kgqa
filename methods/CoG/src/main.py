@@ -14,7 +14,7 @@ from sentence_transformers import SentenceTransformer
 
 from utils import *
 from freebase_func import *
-from logging_utils import initialize_logger, logger
+from logging_utils import initialize_logger, logger, begin_detail, record_step
 
 
 # 用于断点续跑，若已有结果文件，会跳过其中的样本
@@ -47,6 +47,7 @@ def process_question(data, args, question_string, model, retriever):
     start_time = time.time()
     call_num = 0
     all_tokens = {'total': 0, 'input': 0, 'output': 0}
+    begin_detail(data, question, args.output_file, enabled=args.save_detail)
 
     try:
         best_answer_so_far = "null" 
@@ -98,6 +99,7 @@ def process_question(data, args, question_string, model, retriever):
         # 问题分解
         call_num += 1
         sub_questions, token_num = get_subquestions(memory_path, question, args)
+        record_step("question_decomposition", sub_questions=sub_questions)
         for token_type in token_num.keys():
             all_tokens[token_type] += token_num[token_type]
 
@@ -202,6 +204,7 @@ def process_question(data, args, question_string, model, retriever):
                 
                 total_candidates, total_relations, total_entities_id, total_topic_entities, total_head = update_history(entity_candidates, ent_rel_pair, entity_candidates_id, total_candidates, total_relations, total_entities_id, total_topic_entities, total_head)
             depth_entities_relations_entities_dict[depth] = entity_relation_entity_dict
+        record_step("kg_candidates", depth=depth, candidates=entity_relation_entity_dict)
 
             # 实体扩展失败后，也是根据已有信息回答
             if len(total_candidates) == 0:
@@ -442,6 +445,7 @@ if __name__ == '__main__':
     parser.add_argument("--relation_question_weight", type=float, default=0.60, help="Weight for question-to-relation similarity.")
     parser.add_argument("--relation_prediction_weight", type=float, default=0.25, help="Weight for predicted-relation-to-relation similarity.")
     parser.add_argument("--relation_skeleton_weight", type=float, default=0.15, help="Weight for global-skeleton-to-relation similarity.")
+    parser.add_argument("--save_detail", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--output_dir", type=str, default="../output")
     args = parser.parse_args()
 

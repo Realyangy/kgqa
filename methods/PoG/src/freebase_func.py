@@ -1,6 +1,6 @@
 import ast
 from utils import *
-from logging_utils import logger
+from logging_utils import logger, record_sparql
 from SPARQLWrapper import SPARQLWrapper, JSON
 
 # freebase 部署的端口路径
@@ -83,8 +83,13 @@ def execurte_sparql(sparql_query):
     sparql = SPARQLWrapper(SPARQLPATH)
     sparql.setQuery(sparql_query)
     sparql.setReturnFormat(JSON)
-    results = sparql.query().convert()
-    return results["results"]["bindings"]
+    try:
+        rows = sparql.query().convert()["results"]["bindings"]
+        record_sparql(sparql_query, result_count=len(rows))
+        return rows
+    except Exception as error:
+        record_sparql(sparql_query, error=error)
+        raise
 
 
 def replace_relation_prefix(relations):

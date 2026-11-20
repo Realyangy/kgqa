@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from schema import Entity, Relation
 
 
-SPARQLPATH = "http://localhost:3001/sparql"
+SPARQLPATH = "http://localhost:8890/sparql"
 SPARQL_LABEL_BATCH_SIZE = int(os.getenv("FREEBASE_LABEL_BATCH_SIZE", "100"))
 
 _FREEBASE_URI_PREFIX = "http://rdf.freebase.com/ns/"

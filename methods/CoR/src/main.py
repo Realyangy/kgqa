@@ -75,7 +75,7 @@ def disable_net_proxy():
 
 def main():
     parser = argparse.ArgumentParser(description="CoR Freebase KGQA baseline")
-    parser.add_argument("--data_dir", default="../../data/test")
+    parser.add_argument("--data_dir", default="../../../data/test")
     parser.add_argument("--dataset", choices=["cwq", "webqsp", "grailqa"], default="cwq")
     parser.add_argument("--dataset_sample_num", type=sample_count, default=500)
     parser.add_argument("--dataset_sample_seed", type=int, default=42)

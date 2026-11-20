@@ -80,13 +80,6 @@ class CoRAgent:
         }
 
 
-
-    @staticmethod
-    def _split_answers(text: str) -> List[str]:
-        if not text:
-            return []
-        return [part.strip() for part in re.split(r",|;", text) if part.strip()]
-
     @staticmethod
     def _build_result_items(
         entity_ids: List[str],
@@ -559,30 +552,23 @@ class CoRAgent:
         if decision == "no":
             return "Forward"
         return "UnknownAction"
+    
 
     @staticmethod
-    def _extract_filter_answer(text: str) -> Tuple[bool, str]:
+    def _extract_filter_answer(text: str) -> Tuple[bool, List[str]]:
         if not text:
-            return False, ""
+            return False, []
 
-        # Preferred format: strict JSON object with `answer: list[str]`
         try:
             parsed = json.loads(text)
-            if isinstance(parsed, dict):
-                answers = parsed.get("answer", [])
-                if isinstance(answers, list):
-                    clean_answers = [str(item).strip() for item in answers if str(item).strip()]
-                    return True, ", ".join(clean_answers)
-        except Exception:
-            pass
+        except json.JSONDecodeError:
+            return False, []
 
-        # Backward compatibility: legacy "Therefore, the answer is {a, b}" style
-        start_index = text.find("{")
-        end_index = text.find("}")
-        if start_index != -1 and end_index != -1 and end_index > start_index:
-            return True, text[start_index + 1 : end_index].strip()
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("answer"), list):
+            return False, []
 
-        return False, ""
+        answers = [str(item).strip() for item in parsed["answer"] if str(item).strip()]
+        return True, answers
 
 
     # 关系搜索：只根据起点实体和走过的关系链进行后续的关系查询，查询结果是下一跳关系
@@ -768,11 +754,12 @@ class CoRAgent:
         warnings = []
         if not response:
             warnings.append("LLM returned empty response.")
-            result = ""
+            result = []
         else:
             success, result = self._extract_filter_answer(response)
             if not success:
-                warnings.append("Failed to parse answer from response (expected JSON answer list or legacy braced answer).")
+                warnings.append("Failed to parse answer from response (expected a JSON object with an answer list).")
+        
         prompt_history.append(self._with_trace({
             "type": "filter_answer",
             "prompt": prompt,
@@ -784,18 +771,22 @@ class CoRAgent:
             "parsed_result": result,
             "warnings": warnings
         }))
-        return result if result else None
+        return result
 
 
     def generate_directly(self, question, prompt_history):
         prompt = generate_directly_user_prompt.substitute(question=question)
         response, usage = self.llm_api.generate(prompt, self.temperature_reasoning, self.max_token, generate_directly_system_prompt.substitute())
-        result = self._extract_filter_answer(response)[1] if response else ""
+
         warnings = []
         if not response:
             warnings.append("LLM returned empty response.")
-        elif not result:
-            warnings.append("Failed to parse answer from response (expected JSON answer list or legacy braced answer).")
+            result = []
+        else:
+            success, result = self._extract_filter_answer(response)
+            if not success:
+                warnings.append("Failed to parse answer from response (expected a JSON object with an answer list).")
+        
         prompt_history.append(self._with_trace({"type": "generate_without_explored_paths", "prompt": prompt,
             "input_tokens": usage.get("input_tokens", -1), "output_tokens": usage.get("output_tokens", -1),
             "response": response, "parsed_result": result, "warnings": warnings}))
@@ -997,8 +988,8 @@ class CoRAgent:
                         if last_event.get("type") == "filter_answer":
                             step_history.append(self._llm_event_to_step(last_event))
 
-                    # 提取答案，生成推理链
-                    result = self._split_answers(filter_response or "")
+                    # filter_response作为已返回答案列表
+                    result = filter_response
                     if result:
                         logging.info("[depth=%s] filter accepted answers=%s | chain=%s", current_depth, len(result), chain_sig)
                         mapped_results = self._map_answer_names_to_results(
@@ -1088,10 +1079,10 @@ class CoRAgent:
         # 兜底，直接调用LLM回答问题
         prompt_before = len(prompt_history)
         logging.info(" DFS ended without final answer, fallback to generate_directly")
-        generated = self.generate_directly(question=question, prompt_history=prompt_history)
+        results = self.generate_directly(question=question, prompt_history=prompt_history)
         for event in prompt_history[prompt_before:]:
             step_history.append(self._llm_event_to_step(event))
-        results = self._split_answers(generated)
+
         return {
             "action": "generate_directly",
             "question": question,

@@ -314,7 +314,6 @@ def prepare_dataset(dataset_name):
 
 #     with open(output_file, "a", encoding="utf-8") as f:
 #         f.write(json.dumps(error_result, ensure_ascii=False) + "\n")
-    finish_detail(error_result)
 
 
 def save_error_result(output_file, question, reasoning_chains=None, stats=None, start_time=None):
@@ -324,6 +323,7 @@ def save_error_result(output_file, question, reasoning_chains=None, stats=None, 
     os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(error_result, ensure_ascii=False) + "\n")
+    finish_detail(error_result)
 
 
 # 加载已经存在的实验结果文件，读取每个样本的最新实验结果

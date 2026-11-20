@@ -14,16 +14,11 @@ from mcts import MCTSPathFinder
 from model import LLM_Client
 from prompt_list import answer_prompt
 
-BASE_DIR = Path(__file__).resolve().parent
 DATASETS = {
-    "cwq": ("/home/liyuyang/lyy/kgqa/data/test/cwq.json", "question"),
-    "webqsp": ("/home/liyuyang/lyy/kgqa/data/test/webqsp.json", "RawQuestion"),
+    "cwq": ("../../../data/test/cwq.json", "question"),
+    "webqsp": ("../../../data/test/webqsp.json", "RawQuestion"),
 }
 MODELS_DICT = {
-    "Qwen2.5-7B-Instruct-GPTQ-Int4": {
-        "model_path": "/home/liyuyang/lyy/Models/LLM/Qwen2.5-7B-Instruct-GPTQ-Int4",
-        "base_url": "http://localhost:8001/v1", "api_key": "EMPTY",
-    },
     "Qwen3.5-27b-AWQ-4bit": {
         "model_path": "/home/flyvideo/Sata2/Models/LLM/Qwen3.5-27B-AWQ-4bit",
         "base_url": "http://localhost:8001/v1", "api_key": "EMPTY",
@@ -44,7 +39,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="ReKG-MCTS")
     parser.add_argument("--dataset", type=str.lower, choices=DATASETS, default="cwq")
     parser.add_argument("--data_path", default=None, help="Override the dataset JSON path")
-    parser.add_argument("--model_name", choices=MODELS_DICT, default="Qwen2.5-7B-Instruct-GPTQ-Int4")
+    parser.add_argument("--model_name", choices=MODELS_DICT, default="Qwen3.5-27b-AWQ-4bit")
     parser.add_argument("--model", default=None, help="Override the model path or served model name")
     parser.add_argument("--base_url", default=None)
     parser.add_argument("--api_key", default=None)
@@ -62,7 +57,7 @@ def parse_args():
     parser.add_argument("--dataset_sample_num", "--num_sample", dest="dataset_sample_num", type=int, default=None)
     parser.add_argument("--dataset_sample_seed", "--sample_seed", dest="dataset_sample_seed", type=int, default=42)
     parser.add_argument("--random_seed", type=int, default=42)
-    parser.add_argument("--output_dir", default=str(BASE_DIR / "output"))
+    parser.add_argument("--output_dir", default="../output")
     parser.add_argument("--output_file", default=None)
     parser.add_argument("--log_file", default=None)
     args = parser.parse_args()

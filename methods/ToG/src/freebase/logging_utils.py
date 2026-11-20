@@ -53,6 +53,7 @@ def append_search_trace(logger, dataset, question, depth, event, **kwargs):
         "event": event,
         **kwargs,
     }
+    record_step(event, depth=depth, **kwargs)
     logger.info(
         "SEARCH_TRACE %s",
         json.dumps(record, ensure_ascii=False, default=str),

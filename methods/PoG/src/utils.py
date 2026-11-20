@@ -3,7 +3,7 @@ import re
 import json
 import time
 import openai
-from logging_utils import logger
+from logging_utils import logger, record_llm, finish_detail
 from sentence_transformers import util
 
 from prompt_list import *
@@ -79,6 +79,7 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="qwen3.5-
         "output": completion.usage.completion_tokens
     }
 
+    record_llm(prompt, result, token_num, model=engine, temperature=temperature, max_tokens=max_tokens)
     return result, token_num
 
 
@@ -152,6 +153,7 @@ def save_2_jsonl(question, question_string, answer, cluster_chain_of_entities, c
     with open(output_file, "a", encoding="utf-8") as outfile:
         json_str = json.dumps(result, ensure_ascii=False)
         outfile.write(json_str + "\n")
+    finish_detail(result)
 
 
 def save_error_result(question, question_string, output_file):
@@ -169,6 +171,7 @@ def save_error_result(question, question_string, output_file):
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as outfile:
         outfile.write(json.dumps(error_result, ensure_ascii=False) + "\n")
+    finish_detail(error_result)
 
 
 def load_previous_results(output_file, question_string):

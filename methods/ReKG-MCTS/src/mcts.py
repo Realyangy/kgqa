@@ -188,6 +188,7 @@ class MCTSPathFinder:
         self.best_path = []
         self.best_path_value = 0.0
         self.best_path_source = None
+        self.trace_events = []
 
     def _update_best_path(self, path, value, source):
         if not path or (self.best_path and value <= self.best_path_value):
@@ -242,24 +243,32 @@ class MCTSPathFinder:
                     leaf.is_fully_expanded = True
                     logger.info("  [Main]Marked node as terminal: no child paths.")
 
-            # Sample distinct paths from the children created by this expansion.
-            starts = random.sample(children, min(self.rollout_count, len(children)))
-            for index, start in enumerate(starts):
-                sim_path = self._simulate(start)
-                reward, explanation = self.evaluate(sim_path)
-                self._backpropagate(start, reward)
-                logger.info("  [Main]Rollout %d/%d reward=%.3f path=%s",
-                            index + 1, len(starts), reward,
-                            format_reasoning_path(sim_path, fallback_sep=", "))
+            # Simulate(C_l): UCB-tree traversal followed by policy rollout.
+            # The simulated suffix only estimates value; it is not answer evidence.
+            if leaf.children and len(leaf.path) < self.max_depth:
+                for index in range(self.rollout_count):
+                    sim_path = self._simulate(leaf)
+                    if not sim_path:
+                        continue
+                    reward, explanation = self.evaluate(sim_path)
+                    self._backpropagate(leaf, reward)
+                    self.trace_events.append({
+                        "event": "rollout", "iteration": iteration + 1,
+                        "selected_path": list(leaf.path),
+                        "simulated_path": list(sim_path),
+                        "reward": reward, "reason": explanation,
+                    })
+                    logger.info("  [Main]Rollout %d/%d reward=%.3f path=%s",
+                                index + 1, self.rollout_count, reward,
+                                format_reasoning_path(sim_path, fallback_sep=", "))
 
         logger.info("  [Main]MCTS iterations completed.")
         best_node = self._get_best_node()
         if best_node:
-            self._update_best_path(
-                best_node.path,
-                best_node.v,
-                "tree",
-            )
+            # Use backpropagated average reward for tree paths at search end.
+            self.best_path = list(best_node.path)
+            self.best_path_value = best_node.average_reward
+            self.best_path_source = "tree"
 
         logger.info("Final best path: %s", format_reasoning_path(self.best_path, fallback_sep=", "))
         logger.info("Path value: %.3f", self.best_path_value)
@@ -324,6 +333,7 @@ class MCTSPathFinder:
                 entity_name=entity_name,
                 relation_history=relation_history,
                 path_history=node.path,
+                include_path_history=True,
             )
             if not relations:
                 node.mark_entity_fully_expanded(entity_id)
@@ -394,6 +404,13 @@ class MCTSPathFinder:
         children.sort(key=lambda child: child.v, reverse=True)
         retained = children[:max(0, self.beam_size - len(existing_children))]
         node.children = existing_children + retained
+        self.trace_events.append({
+            "event": "expand", "selected_path": list(node.path),
+            "evaluated_children": [
+                {"path": list(child.path), "score": child.v} for child in children
+            ],
+            "retained_paths": [list(child.path) for child in retained],
+        })
         logger.info("  [Main]Evaluated %s children; retained %s (beam size %s).",
                     len(children), len(retained), self.beam_size)
         return retained
@@ -465,7 +482,7 @@ class MCTSPathFinder:
                 )
                 candidate_ids = self.kg_utils.entity_prune(
                     targets, temp_node, relation_info["relation"],
-                    relation_info["head"], current_entity, topk=1,
+                    relation_info["head"], current_entity, topk=self.kg_utils.entity_topk,
                 )
                 if not candidate_ids:
                     continue

@@ -1,5 +1,6 @@
 from utils import *
 from SPARQLWrapper import SPARQLWrapper, JSON
+from logging_utils import record_sparql
 
 # freebase 部署的端口路径
 SPARQLPATH = "http://localhost:3001/sparql"
@@ -66,8 +67,14 @@ def execurte_sparql(sparql_query):
     sparql = SPARQLWrapper(SPARQLPATH)
     sparql.setQuery(sparql_query)
     sparql.setReturnFormat(JSON)
-    results = sparql.query().convert()
-    return results["results"]["bindings"]
+    try:
+        results = sparql.query().convert()
+        rows = results["results"]["bindings"]
+        record_sparql(sparql_query, result_count=len(rows))
+        return rows
+    except Exception as error:
+        record_sparql(sparql_query, error=error)
+        raise
 
 
 # 去掉SPARQL查询结果中的关系前缀，仅保留关系名称

@@ -4,11 +4,12 @@ import json
 import logging
 import os
 import random
+import re
 import time
 from pathlib import Path
 
 from tqdm import tqdm
-from freebase_func import disable_net_proxy
+from freebase_func import disable_net_proxy, set_sparql_trace
 from logging_utils import initialize_logger
 from mcts import MCTSPathFinder
 from model import LLM_Client
@@ -58,6 +59,7 @@ def parse_args():
     parser.add_argument("--dataset_sample_seed", "--sample_seed", dest="dataset_sample_seed", type=int, default=42)
     parser.add_argument("--random_seed", type=int, default=42)
     parser.add_argument("--output_dir", default="../output")
+    parser.add_argument("--save_detail", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--output_file", default=None)
     parser.add_argument("--log_file", default=None)
     args = parser.parse_args()
@@ -74,8 +76,10 @@ def parse_args():
     if not args.api_key:
         parser.error("The selected model API key is missing; set its environment variable or use --api_key")
     name = f"ReKG-MCTS_data_{args.dataset}_sampleNum_{args.dataset_sample_num}_sampleSeed_{args.dataset_sample_seed}_modelName_{args.model_name.lower()}"
-    args.output_file = args.output_file or str(Path(args.output_dir) / (name + ".jsonl"))
-    args.log_file = args.log_file or str(Path(args.output_dir) / (name + ".log"))
+    run_dir = Path(args.output_dir) / name
+    args.run_dir = str(run_dir)
+    args.output_file = args.output_file or str(run_dir / (name + ".jsonl"))
+    args.log_file = args.log_file or str(run_dir / (name + ".log"))
     return args
 
 
@@ -121,7 +125,9 @@ def main():
     initialize_logger(args.log_file)
     disable_net_proxy()
     dataset_path, question_key = DATASETS[args.dataset]
-    with open(args.data_path or dataset_path, encoding="utf-8") as stream:
+    repo_root = Path(__file__).resolve().parents[3]
+    resolved_data_path = args.data_path or str(repo_root / "data" / "test" / (args.dataset + ".json"))
+    with open(resolved_data_path, encoding="utf-8") as stream:
         data = json.load(stream)
     if args.dataset_sample_num is not None:
         if not 0 <= args.dataset_sample_num <= len(data):
@@ -147,6 +153,10 @@ def main():
         random.seed(f"{args.random_seed}:{question}")
         started = time.monotonic()
         before = model.get_usage_snapshot()
+        prompt_history, sparql_history = [], []
+        model.set_prompt_history(prompt_history)
+        set_sparql_trace(sparql_history)
+        finder = None
         try:
             topics = item.get("topic_entity") or {}
             if not topics:
@@ -178,6 +188,24 @@ def main():
                        "time": round(time.monotonic() - started, 4)})
         append_result(args.output_file, record)
         previous_results[question] = record
+        if args.save_detail:
+            try:
+                detail_dir = Path(args.run_dir) / "details"
+                detail_dir.mkdir(parents=True, exist_ok=True)
+                question_id = item.get("ID") or item.get("QuestionId") or question
+                safe_id = re.sub(r"[^\\w.\\-]", "_", str(question_id))
+                detail = {
+                    "id": question_id, "question": question, "topic_entities": item.get("topic_entity") or {},
+                    "result": record, "prompt_history": prompt_history,
+                    "sparql_history": sparql_history,
+                    "mcts_history": finder.trace_events if finder is not None else [],
+                }
+                with (detail_dir / (safe_id + ".json")).open("w", encoding="utf-8") as stream:
+                    json.dump(detail, stream, ensure_ascii=False, indent=2)
+            except Exception:
+                logger.exception("Failed to save details for question: %s", question)
+        model.set_prompt_history(None)
+        set_sparql_trace(None)
     logger.info("Finished processing %d selected samples; results: %s", len(data), args.output_file)
 
 

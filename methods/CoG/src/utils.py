@@ -10,7 +10,7 @@ from openai import OpenAI
 from sentence_transformers import util, SentenceTransformer
 
 from prompt_list import *
-from logging_utils import logger
+from logging_utils import logger, record_llm, finish_detail
 
 
 def retrieve_top_docs(query, docs, model, width=3):
@@ -85,6 +85,7 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-
         "output": completion.usage.completion_tokens
     }
 
+    record_llm(prompt, result, token_num, model=engine, temperature=temperature, max_tokens=max_tokens)
     return result, token_num
 
 
@@ -114,6 +115,7 @@ def save_2_jsonl(question, question_string, answer, cluster_chain_of_entities, c
     with open(output_file, "a", encoding='utf-8') as outfile:
         json_str = json.dumps(dict, ensure_ascii=False)
         outfile.write(json_str + "\n")
+    finish_detail(dict)
 
 
 # 保存失败样本及失败前已产生的计算开销
@@ -132,6 +134,7 @@ def save_error_result(question, question_string, output_file, call_num, all_toke
     os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as outfile:
         outfile.write(json.dumps(error_result, ensure_ascii=False) + "\n")
+    finish_detail(error_result)
 
 
 

@@ -193,7 +193,7 @@ def main():
                 detail_dir = Path(args.run_dir) / "details"
                 detail_dir.mkdir(parents=True, exist_ok=True)
                 question_id = item.get("ID") or item.get("QuestionId") or question
-                safe_id = re.sub(r"[^\\w.\\-]", "_", str(question_id))
+                safe_id = re.sub(r"[^\w.\-]", "_", str(question_id))
                 detail = {
                     "id": question_id, "question": question, "topic_entities": item.get("topic_entity") or {},
                     "result": record, "prompt_history": prompt_history,

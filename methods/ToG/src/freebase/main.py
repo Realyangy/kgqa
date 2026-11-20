@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from utils import *
 from freebase_func import *
-from logging_utils import append_search_trace, initialize_logger
+from logging_utils import append_search_trace, initialize_logger, begin_detail
 
 MODELS_DICT = {
     "Qwen3.5-27b-AWQ-4bit": {
@@ -43,6 +43,7 @@ if __name__ == '__main__':
     parser.add_argument("--depth", type=int, default=3, help="choose the search depth of ToG.")
     parser.add_argument("--remove_unnecessary_rel", type=bool, default=True, help="whether removing unnecessary relations.")
     parser.add_argument("--num_retain_entity", type=int, default=5, help="Number of candidate entities randomly retained for LLM-based entity scoring when more than 20 entities are retrieved.")
+    parser.add_argument("--save_detail", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--output_dir", type=str, default="../../output", help="Root directory for saving results, relative to methods/ToG/src/freebase.")
     parser.add_argument("--random_seed", type=int, default=42, help="Random seed for all candidate-entity sampling.")
     args = parser.parse_args()
@@ -82,6 +83,8 @@ if __name__ == '__main__':
             if previous_result.get("results") != "error" and all(key in previous_result for key in ("call_num", "total_token", "input_token", "output_token", "time")):
                 continue
             logger.info("Retry failed question: %s", question)
+
+        begin_detail(data, question, args.output_file, enabled=args.save_detail)
 
         # 初始化单题计算开销，每次调用run_llm计一次LLM Call
         start_time = time.time()

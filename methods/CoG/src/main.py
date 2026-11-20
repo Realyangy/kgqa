@@ -84,6 +84,7 @@ def process_question(data, args, question_string, model, retriever):
         if retriever:
             try:
                 skeleton_chain, skel_tokens, skeleton_str, spec_type = speculate_skeleton_chain(question, topic_entity_names, retriever, args, model)
+                record_step("skeleton", skeleton_chain=skeleton_chain, skeleton=skeleton_str, source=spec_type)
                 local_stats[spec_type] += 1
                 call_num += skel_tokens.get('calls', 0)
                 for token_type in skel_tokens.keys():
@@ -204,7 +205,7 @@ def process_question(data, args, question_string, model, retriever):
                 
                 total_candidates, total_relations, total_entities_id, total_topic_entities, total_head = update_history(entity_candidates, ent_rel_pair, entity_candidates_id, total_candidates, total_relations, total_entities_id, total_topic_entities, total_head)
             depth_entities_relations_entities_dict[depth] = entity_relation_entity_dict
-        record_step("kg_candidates", depth=depth, candidates=entity_relation_entity_dict)
+            record_step("kg_candidates", depth=depth, candidates=entity_relation_entity_dict)
 
             # 实体扩展失败后，也是根据已有信息回答
             if len(total_candidates) == 0:
@@ -218,6 +219,7 @@ def process_question(data, args, question_string, model, retriever):
             # 实体剪枝
             flag, chain_of_entities, selected_entity_ids, selected_relations, selected_heads, new_entity_relation_entity_dict, cur_call_time, cur_token = entity_condition_prune(question, entity_relation_entity_dict, entity_id_to_name, entity_name_to_id, args, model)
             cluster_chain_of_entities.append(chain_of_entities)
+            record_step("entity_pruning", depth=depth, selected_entity_ids=selected_entity_ids, pruned_candidates=new_entity_relation_entity_dict)
             call_num += cur_call_time
             for token_type in cur_token.keys():
                 all_tokens[token_type] += cur_token[token_type]
@@ -290,6 +292,7 @@ def process_question(data, args, question_string, model, retriever):
                         # 提取反思选择的回溯实体
                         reflection_entity_list = [entity_id for entity_id in reflection_entity_list if entity_id not in reflection_records['ent']]
                         if reflection_entity_list:
+                            record_step("reflection", depth=depth, entity_ids=reflection_entity_list)
                             reflection_records['time'] += 1
                             reflection_records['ent'] += reflection_entity_list
 

@@ -1,9 +1,18 @@
 import os
+import time
 
 from SPARQLWrapper import JSON, SPARQLWrapper
 
 
 SPARQLPATH = "http://localhost:3001/sparql"
+
+_SPARQL_TRACE = None
+
+
+def set_sparql_trace(trace):
+    """Collect SPARQL queries for the current question (single-threaded runner)."""
+    global _SPARQL_TRACE
+    _SPARQL_TRACE = trace
 
 sparql_search_out_rel = """
 PREFIX ns: <http://rdf.freebase.com/ns/>
@@ -25,6 +34,7 @@ SELECT DISTINCT ?Entity
 WHERE {
     ns:%s ns:%s ?Entity .
 }
+LIMIT 1000
 """
 
 sparql_search_head_entities = """
@@ -33,34 +43,32 @@ SELECT DISTINCT ?Entity
 WHERE {
     ?Entity ns:%s ns:%s .
 }
+LIMIT 1000
 """
 
-sparql_name_en = """PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?tailEntity
+# Batch name resolution: prefer English names and aliases; follow sameAs to a
+# *named* linked entity instead of treating the linked URI as a name.
+sparql_ids2names = """PREFIX ns: <http://rdf.freebase.com/ns/>
+SELECT DISTINCT ?entity ?targetEntity ?priority
 WHERE {
-  ?entity ns:type.object.name ?tailEntity .
-  FILTER(?entity = ns:%s)
-  FILTER(LANG(?tailEntity) = "en")
+    VALUES ?entity { %s }
+    {
+        ?entity ns:type.object.name ?targetEntity .
+        BIND(1 AS ?priority)
+    }
+    UNION
+    {
+        ?entity ns:common.topic.alias ?targetEntity .
+        BIND(2 AS ?priority)
+    }
+    UNION
+    {
+        ?entity <http://www.w3.org/2002/07/owl#sameAs> ?sameAs .
+        ?sameAs ns:type.object.name ?targetEntity .
+        BIND(3 AS ?priority)
+    }
 }
-ORDER BY STR(?tailEntity)
-LIMIT 1"""
-sparql_name_any = """PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?tailEntity
-WHERE {
-  ?entity ns:type.object.name ?tailEntity .
-  FILTER(?entity = ns:%s)
-}
-ORDER BY STR(?tailEntity)
-LIMIT 1"""
-sparql_same_as = """PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?tailEntity
-WHERE {
-  ?entity <http://www.w3.org/2002/07/owl#sameAs> ?tailEntity .
-  FILTER(?entity = ns:%s)
-}
-ORDER BY STR(?tailEntity)
-LIMIT 1"""
-
+"""
 
 def disable_net_proxy():
     for var in [
@@ -77,11 +85,26 @@ def disable_net_proxy():
 
 
 def execurte_sparql(sparql_query):
-    sparql = SPARQLWrapper(SPARQLPATH)
-    sparql.setQuery(sparql_query)
-    sparql.setReturnFormat(JSON)
-    results = sparql.query().convert()
-    return results["results"]["bindings"]
+    started = time.monotonic()
+    try:
+        sparql = SPARQLWrapper(SPARQLPATH)
+        sparql.setQuery(sparql_query)
+        sparql.setReturnFormat(JSON)
+        rows = sparql.query().convert()["results"]["bindings"]
+        if _SPARQL_TRACE is not None:
+            _SPARQL_TRACE.append({
+                "sparql": sparql_query, "result_count": len(rows),
+                "elapsed_s": round(time.monotonic() - started, 4), "status": "ok",
+            })
+        return rows
+    except Exception as error:
+        if _SPARQL_TRACE is not None:
+            _SPARQL_TRACE.append({
+                "sparql": sparql_query, "result_count": 0,
+                "elapsed_s": round(time.monotonic() - started, 4),
+                "status": "error", "error": str(error),
+            })
+        raise
 
 
 def normalize_relation(rel: str) -> str:
@@ -142,22 +165,52 @@ def is_valid_entity(entity: str) -> bool:
 ENTITY_NAME_CACHE = {}
 
 
+def get_entity_names(entity_ids):
+    """Resolve up to a batch of Freebase IDs per SPARQL call, retaining every ID."""
+    unique_ids = list(dict.fromkeys(str(entity_id) for entity_id in entity_ids))
+    resolved = {}
+    pending = []
+    for entity_id in unique_ids:
+        if not is_freebase_entity_id(entity_id):
+            resolved[entity_id] = entity_id
+        elif entity_id in ENTITY_NAME_CACHE:
+            resolved[entity_id] = ENTITY_NAME_CACHE[entity_id]
+        else:
+            pending.append(entity_id)
+
+    for offset in range(0, len(pending), 100):
+        batch = pending[offset:offset + 100]
+        query = sparql_ids2names % " ".join("ns:" + entity_id for entity_id in batch)
+        rows = execurte_sparql(query)
+        best = {}
+        for item in rows:
+            entity_uri = str(item.get("entity", {}).get("value", ""))
+            entity_id = entity_uri.removeprefix("http://rdf.freebase.com/ns/")
+            label_field = item.get("targetEntity", {})
+            label = str(label_field.get("value", "")).strip()
+            if entity_id not in batch or not label or label_field.get("type") == "uri":
+                continue
+            lang = str(label_field.get("xml:lang", "")).lower()
+            english = lang == "en" or lang.startswith("en-")
+            try:
+                priority = int(item.get("priority", {}).get("value", "3"))
+            except (TypeError, ValueError):
+                priority = 3
+            priority = min(3, max(1, priority))
+            # English name > English alias > English sameAs-name > other labels.
+            rank = (priority - 1) if english else (priority + 2)
+            choice = (rank, label)
+            if entity_id not in best or choice < best[entity_id]:
+                best[entity_id] = choice
+        for entity_id in batch:
+            name = best[entity_id][1] if entity_id in best else "Unknown"
+            ENTITY_NAME_CACHE[entity_id] = name
+            resolved[entity_id] = name
+    return resolved
+
+
 def get_entity_name(entity_id):
-    if entity_id in ENTITY_NAME_CACHE:
-        return ENTITY_NAME_CACHE[entity_id]
-    if not is_freebase_entity_id(entity_id):
-        return entity_id
-
-    for template in (sparql_name_en, sparql_name_any, sparql_same_as):
-        results = execurte_sparql(template % entity_id)
-        if results:
-            name = results[0].get("tailEntity", {}).get("value", "")
-            if name:
-                ENTITY_NAME_CACHE[entity_id] = name
-                return name
-    ENTITY_NAME_CACHE[entity_id] = "Unknown"
-    return "Unknown"
-
+    return get_entity_names([entity_id])[str(entity_id)]
 
 def is_noise_relation(relation: str) -> bool:
     """Apply the relation exclusions used by the official implementation."""

@@ -9,7 +9,7 @@ from sentence_transformers import SentenceTransformer
 
 from utils import *
 from freebase_func import *
-from logging_utils import initialize_logger, log_file_only, logger, log_subquestions
+from logging_utils import initialize_logger, log_file_only, logger, log_subquestions, begin_detail, record_step
 
 
 MODELS_DICT = {
@@ -73,6 +73,7 @@ if __name__ == '__main__':
     parser.add_argument("--temperature_exploration", type=float, default=0.3, help="the temperature in exploration stage.")
     parser.add_argument("--temperature_reasoning", type=float, default=0.3, help="the temperature in reasoning stage.")
     parser.add_argument("--embedding_model", type=str, default="/home/flyvideo/Sata2/Models/Embedding-Model/msmarco-distilbert-base-tas-b")
+    parser.add_argument("--save_detail", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--output_dir", type=str, default="/home/flyvideo/Sata2/lyy/kgqa/methods/PoG/output", help="Root directory for logs, results, and memory files, relative to methods/PoG/src.")
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
     parser.add_argument("--dataset_sample_num",type=int, default=500, help="Number of dataset samples to evaluate. Use None for all samples.")
@@ -122,6 +123,7 @@ if __name__ == '__main__':
                 continue
             logger.info("Retry failed question: %s", question)
 
+        begin_detail(data, question, args.output_file, enabled=args.save_detail)
         try:
             # 记录当前样本的时间开销、LLM调用次数和token开销
             start_time = time.time()
@@ -154,6 +156,7 @@ if __name__ == '__main__':
             for token_type in token_num.keys():
                 all_tokens[token_type] += token_num[token_type]
             log_subquestions(sub_questions)
+            record_step("question_decomposition", sub_questions=sub_questions)
 
             cluster_chain_of_entities = []
             depth_entities_relations_entities_dict = {}
@@ -247,6 +250,7 @@ if __name__ == '__main__':
 
                 # 记录当前深度下的（即本轮）检索的关系和实体信息
                 depth_entities_relations_entities_dict[depth] = entity_relation_entity_dict
+                record_step("kg_candidates", depth=depth, candidates=entity_relation_entity_dict)
                 logger.info("[Searching]")
                 log_entity_graph("Before entity pruning:",  entity_relation_entity_dict, entity_id_to_name, file_only=True)
 
@@ -321,6 +325,7 @@ if __name__ == '__main__':
                             # 将反思模块选择的回溯实体加入记录，同时记录本次反思
                             reflection_entity_list = [entity for entity in reflection_entity_list if entity not in reflection_records['ent']]
                             if reflection_entity_list:
+                                record_step("reflection", depth=depth, entity_ids=reflection_entity_list)
                                 reflection_records['time'] += 1
                                 reflection_records['ent'] += reflection_entity_list
 

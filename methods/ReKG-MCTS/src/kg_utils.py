@@ -6,6 +6,7 @@ from freebase_func import (
     execurte_sparql,
     filter_relations,
     get_entity_name,
+    get_entity_names,
     is_freebase_entity_id,
     is_valid_entity,
     normalize_relation,
@@ -148,16 +149,25 @@ class KgSearchUtils:
     def entity_prune(self, candidate_entities, node, relation, head=True,
                      source_entity_info=None, topk=None):
         """Keep unnamed IDs when all candidates lack names, as in local ToG."""
+        # Cap candidates at 50 ID values before resolving names.
         candidates = sorted(set(candidate_entities))
         if not candidates:
             return []
-        limit = topk or self.entity_topk
-        if len(candidates) >= 20:
-            candidates = sorted(random.sample(candidates, min(limit, len(candidates))))
-        pairs = [(entity_id, get_entity_name(entity_id)) for entity_id in candidates]
-        named = [(entity_id, name) for entity_id, name in pairs if name != "Unknown"]
+        limit = self.entity_topk if topk is None else topk
+        if limit < 1:
+            return []
+        if len(candidates) > 50:
+            candidates = sorted(random.sample(candidates, 50))
+
+        names = get_entity_names(candidates)
+        named = [(entity_id, names[entity_id])
+                 for entity_id in candidates if names[entity_id] != "Unknown"]
         if not named:
-            return [entity_id for entity_id, _ in pairs]
+            # Preserve IDs and randomly keep TopK if all have no readable name.
+            chosen = random.sample(candidates, min(limit, len(candidates)))
+            logger.info("All %d candidates unnamed, retaining %d random IDs.",
+                        len(candidates), len(chosen))
+            return chosen
         if len(named) <= limit:
             return [entity_id for entity_id, _ in named]
 

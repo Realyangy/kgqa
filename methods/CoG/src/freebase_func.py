@@ -9,7 +9,7 @@ from SPARQLWrapper import SPARQLWrapper, JSON
 
 from utils import *
 from prompt_list import *
-from logging_utils import logger
+from logging_utils import logger, record_sparql
 
 # freebase端口
 SPARQLPATH = "http://localhost:3001/sparql"
@@ -98,9 +98,11 @@ def execurte_sparql(sparql_query):
     sparql.setQuery(sparql_query)
     sparql.setReturnFormat(JSON)
     try:
-        results = sparql.query().convert()
-        return results["results"]["bindings"]
+        rows = sparql.query().convert()["results"]["bindings"]
+        record_sparql(sparql_query, result_count=len(rows))
+        return rows
     except Exception as e:
+        record_sparql(sparql_query, error=e)
         logger.info("SPARQL Error: %s", e)
         return []
 

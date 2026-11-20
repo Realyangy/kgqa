@@ -16,7 +16,11 @@ class LLM_Client:
         self.temperature = temperature
         self.max_new_tokens = max_new_tokens
         self.answer_prompt = None
+        self.prompt_history = None
         self.usage_stats = {"num_calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    def set_prompt_history(self, history):
+        self.prompt_history = history
 
     def get_usage_snapshot(self):
         return dict(self.usage_stats)
@@ -68,6 +72,13 @@ class LLM_Client:
                         raise ValueError("LLM returned empty JSON")
                     if response.choices[0].finish_reason == "length":
                         raise ValueError("LLM JSON output was truncated")
+                    if self.prompt_history is not None:
+                        self.prompt_history.append({
+                            "system_prompt": messages[0]["content"],
+                            "prompt": user_prompt, "response": content,
+                            "input_tokens": response.usage.prompt_tokens if response.usage else None,
+                            "output_tokens": response.usage.completion_tokens if response.usage else None,
+                        })
                     logger.info("LLM Response: %s", content, extra={"file_only": True})
                     results.append(content)
                     break

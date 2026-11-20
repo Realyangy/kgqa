@@ -266,6 +266,7 @@ if __name__ == '__main__':
                 for token_type in cur_token.keys():
                     all_tokens[token_type] += cur_token[token_type]
                 cluster_chain_of_entities.append(chain_of_entities)
+                record_step("entity_pruning", depth=depth, selected_entity_ids=selected_entity_ids, pruned_candidates=new_entity_relation_entity_dict)
                 log_entity_graph("After entity pruning:", new_entity_relation_entity_dict, entity_id_to_name)
 
                 # 实体剪枝成功

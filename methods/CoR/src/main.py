@@ -81,7 +81,7 @@ def main():
     parser.add_argument("--dataset", choices=["cwq", "webqsp", "grailqa"], default="cwq")
     parser.add_argument("--dataset_sample_num", type=sample_count, default=500)
     parser.add_argument("--dataset_sample_seed", type=int, default=42)
-    parser.add_argument("--model_name", choices=MODELS_DICT.keys(), default="DeepSeekV4.1-Flash")
+    parser.add_argument("--model_name", choices=MODELS_DICT.keys(), default="Qwen3.5-27b-AWQ-4bit")
     parser.add_argument("--max_length", type=int, default=512)
     parser.add_argument("--temperature_exploration", type=float, default=0.3)
     parser.add_argument("--temperature_reasoning", type=float, default=0.1)

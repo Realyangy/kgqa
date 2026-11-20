@@ -4,7 +4,7 @@ import json
 import time
 from openai import OpenAI
 from prompt_list import *
-from logging_utils import logger
+from logging_utils import logger, record_llm, finish_detail
 
 # 判断得分是否都为零
 def if_all_zero(topn_scores):
@@ -59,6 +59,10 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-
                 raise ValueError("LLM returned empty JSON")
             if response.choices[0].finish_reason == "length":
                 raise ValueError("LLM JSON output was truncated")
+            record_llm(prompt, content, {
+                "input_tokens": response.usage.prompt_tokens if response.usage else None,
+                "output_tokens": response.usage.completion_tokens if response.usage else None,
+            }, temperature=temperature, max_tokens=max_tokens, model=engine)
             return content
         
         except Exception as e:
@@ -218,6 +222,7 @@ def save_2_jsonl(question, answer, cluster_chain_of_entities, output_file, stats
     os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as outfile:
         outfile.write(json.dumps(result, ensure_ascii=False) + "\n")
+    finish_detail(result)
 
 
 # 解析回答类任务的JSON输出
@@ -309,6 +314,7 @@ def prepare_dataset(dataset_name):
 
 #     with open(output_file, "a", encoding="utf-8") as f:
 #         f.write(json.dumps(error_result, ensure_ascii=False) + "\n")
+    finish_detail(error_result)
 
 
 def save_error_result(output_file, question, reasoning_chains=None, stats=None, start_time=None):

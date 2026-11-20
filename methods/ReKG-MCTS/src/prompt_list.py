@@ -21,7 +21,7 @@ Relations:
 [10] base.ontologies.ontology_instance.equivalent_instances
 [11] base.rosetta.languoid.local_name
 [12] language.human_language.region
-A: {"scores":[{"id":1,"score":0.4,"reason":"0.4))}: This relation is highly relevant as it directly relates to the country whose president is being asked for, and the main country where Brahui language is spoken in 1980."},{"id":7,"score":0.3,"reason":"0.3)}: This relation is also relevant as it provides information on the countries where Brahui language is spoken, which could help narrow down the search for the president."},{"id":4,"score":0.2,"reason":"0.2)}: This relation is less relevant but still provides some context on the language family to which Brahui belongs, which could be useful in understanding the linguistic and cultural background of the country in question."}]}
+A: {"scores":[{"id":1,"score":0.4,"reason":"This relation is highly relevant as it directly relates to the country whose president is being asked for, and the main country where Brahui language is spoken in 1980."},{"id":7,"score":0.3,"reason":"This relation is also relevant as it provides information on the countries where Brahui language is spoken, which could help narrow down the search for the president."},{"id":4,"score":0.2,"reason":"This relation is less relevant but still provides some context on the language family to which Brahui belongs, which could be useful in understanding the linguistic and cultural background of the country in question."}]}
 
 Q: $question
 Topic Entity: $entity_name

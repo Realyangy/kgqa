@@ -795,30 +795,19 @@ class CoRAgent:
 
     # 根据问题和起点实体回答
     def answer(self, question: str, topic_entities: List[Entity], **kwargs) -> Dict[str, Any]:
-        if not topic_entities:
-            return {
-                "action": "ERROR",
-                "question": question,
-                "results": [],
-                "reasoning_chains": "No topic_entities provided",
-            }
-
-        normalized_entities = self._normalize_topic_entities(topic_entities)
-        if not normalized_entities:
-            return {
-                "action": "ERROR",
-                "question": question,
-                "results": [],
-                "reasoning_chains": "Invalid topic_entities format",
-            }
-
         prompt_history = kwargs.get("prompt_history", [])
         sparql_history = kwargs.get("sparql_history", [])
         step_history = kwargs.get("step_history", [])
         self._reset_trace()
 
-        root_entity = normalized_entities[0]
-        stack = [(root_entity, [root_entity], 0)]
+        normalized_entities = self._normalize_topic_entities(topic_entities or [])
+        if normalized_entities:
+            root_entity = normalized_entities[0]
+            stack = [(root_entity, [root_entity], 0)]
+        else:
+            logging.info("No valid topic entity, fallback to generate_directly")
+            stack = []
+
         while stack:
             # 从栈中取出第一个元素
             node, current_path, current_depth = stack.pop()
@@ -1078,7 +1067,7 @@ class CoRAgent:
 
         # 兜底，直接调用LLM回答问题
         prompt_before = len(prompt_history)
-        logging.info(" DFS ended without final answer, fallback to generate_directly")
+        logging.info("No answer from graph search, fallback to generate_directly")
         results = self.generate_directly(question=question, prompt_history=prompt_history)
         for event in prompt_history[prompt_before:]:
             step_history.append(self._llm_event_to_step(event))

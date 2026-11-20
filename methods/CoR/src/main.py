@@ -4,9 +4,11 @@ import json
 import time
 import random
 import argparse
+import subprocess
 from tqdm import tqdm
 from pathlib import Path
 
+import freebase_func
 from schema import Entity
 from agent import CoRAgent
 from logging_utils import initialize_logger
@@ -114,6 +116,12 @@ def main():
     output_file = str(run_dir / f"{run_name}.jsonl")
     logger = initialize_logger(output_file)
     logger.info("\n===== Start CoR | dataset=%s samples=%d/%d seed=%d model=%s =====", args.dataset, len(datas), total_size, args.dataset_sample_seed, args.model_name)
+
+    # 记录本次运行的实际参数和服务配置
+    logger.info("Arguments: %s", json.dumps(vars(args), ensure_ascii=False, sort_keys=True))
+    logger.info("Model path: %s", model_config["model_path"])
+    logger.info("Model API: %s", model_config["base_url"])
+    logger.info("Freebase endpoint: %s", freebase_func.SPARQLPATH)
 
     # 检查是否有以及处理过的样本
     previous_results = load_previous_results(output_file, question_string)

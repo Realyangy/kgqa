@@ -3,6 +3,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import random
 import argparse
+import shutil
 from tqdm import tqdm
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
@@ -103,8 +104,20 @@ if __name__ == '__main__':
         
     # 加载模型
     embedding_model = SentenceTransformer(args.embedding_model)
-    args.output_file = str(Path(args.output_dir) / f"PoG_data_{args.dataset}_sampleNum_{args.dataset_sample_num}_sampleSeed_{args.dataset_sample_seed}_modelName_{args.model_name.lower()}.jsonl")
-    logger = initialize_logger(args.output_dir, args.dataset, args.model_name.lower(), args.dataset_sample_num, args.dataset_sample_seed)
+    run_name = f"PoG_data_{args.dataset}_sampleNum_{args.dataset_sample_num}_sampleSeed_{args.dataset_sample_seed}_modelName_{args.model_name.lower()}"
+    output_root = Path(args.output_dir)
+    run_dir = output_root / run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    args.run_dir = str(run_dir)
+    args.output_file = str(run_dir / f"{run_name}.jsonl")
+    legacy_results = output_root / f"{run_name}.jsonl"
+    if legacy_results.is_file() and not Path(args.output_file).exists():
+        shutil.copy2(legacy_results, args.output_file)
+    legacy_log = output_root / f"{run_name}.log"
+    new_log = run_dir / f"{run_name}.log"
+    if legacy_log.is_file() and not new_log.exists():
+        shutil.copy2(legacy_log, new_log)
+    logger = initialize_logger(run_dir, args.dataset, args.model_name.lower(), args.dataset_sample_num, args.dataset_sample_seed)
     logger.info("\n===== Start Running PoG on %s dataset =====", args.dataset)
     if args.dataset_sample_num is not None:
         logger.info("Dataset sampling enabled: selected %d/%d samples with seed %d.", len(datas), total_dataset_size, args.dataset_sample_seed)    
@@ -131,7 +144,7 @@ if __name__ == '__main__':
             all_tokens = {'total': 0, 'input': 0, 'output': 0}
 
             # 创建当前样本的记忆文件，但是先不写入
-            memory_path = Path(args.output_dir) / "memory" / args.dataset / args.model_name.lower() / question
+            memory_path = Path(args.run_dir) / "memory" / args.dataset / args.model_name.lower() / question
             if not os.path.exists(memory_path):
                 os.makedirs(memory_path)
             with open(memory_path / "mem", 'w', encoding='utf-8') as f:

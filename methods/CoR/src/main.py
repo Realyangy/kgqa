@@ -4,6 +4,7 @@ import json
 import time
 import random
 import argparse
+import traceback
 import subprocess
 from tqdm import tqdm
 from pathlib import Path
@@ -68,6 +69,10 @@ def save_detail(run_dir, question_id, data, question, result, prompt_history, sp
         "prompt_history": result.get("prompt_history", prompt_history),
         "sparql_history": result.get("sparql_history", sparql_history)
     }
+    if "error" in result:
+        detail["error"] = result["error"]
+    if "traceback" in result:
+        detail["traceback"] = result["traceback"]
     with open(detail_dir / f"{safe_id}.json", "w", encoding="utf-8") as outfile:
         json.dump(detail, outfile, ensure_ascii=False, indent=2)
 
@@ -143,6 +148,7 @@ def main():
         prompt_history, sparql_history = [], []
         question_id = data.get(id_field, question)
         logger.info("Current Question: %s", question)
+        result = None
 
         try:
             # 仅使用第一个起点实体
@@ -174,10 +180,24 @@ def main():
                 except Exception:
                     logger.exception("Failed to save detail for question=%s", question)
             logger.info("CoR complete | action=%s answers=%s calls=%d", result.get("action"), predictions, agent.llm_api.call_num)
-        except Exception:
+        except Exception as error:
             logger.exception("Error on question=%s", question)
             save_2_jsonl(question, question_string, "error", None, agent.llm_api, started, output_file,
                          id=question_id, action="ERROR", predicted_entities=[])
+            if args.save_detail:
+                partial = result if isinstance(result, dict) else {}
+                error_detail = {
+                    "action": "ERROR",
+                    "results": "error",
+                    "reasoning_chains": partial.get("reasoning_chains", []),
+                    "step_history": partial.get("step_history", []),
+                    "error": f"{type(error).__name__}: {error}",
+                    "traceback": traceback.format_exc(),
+                }
+                try:
+                    save_detail(run_dir, question_id, data, question, error_detail, prompt_history, sparql_history)
+                except Exception:
+                    logger.exception("Failed to save error detail for question=%s", question)
 
     logger.info("CoR finished. Result file: %s", output_file)
 

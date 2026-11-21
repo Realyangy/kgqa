@@ -77,7 +77,10 @@ class KgSearchUtils:
             return []
 
         pruned_relations.sort(key=lambda item: item.get("score", 0.0), reverse=True)
-        logger.info("Selected relations:\n%s", "\n".join(pruned_relations[:retain_topk]))
+        logger.info("Selected relations:\n%s", "\n".join(
+            f"{rel['relation']} | head={rel['head']} | score={rel['score']:.3f}"
+            for rel in pruned_relations[:retain_topk]
+        ))
         return pruned_relations[:retain_topk]
 
 

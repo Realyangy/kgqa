@@ -6,6 +6,7 @@ import json
 import time
 import random
 import argparse
+import shutil
 from tqdm import tqdm
 from pathlib import Path
 
@@ -57,7 +58,7 @@ def process_question(data, args, question_string, model, retriever):
 
         logger.info("\nCurrent Question：%s", question)
         safe_question_name = re.sub(r'[^\w\-. ]+', '_', question)[:200]
-        memory_path = str(Path(args.output_dir) / "memory" / args.dataset / args.model_name.lower() / safe_question_name)
+        memory_path = str(Path(args.run_dir) / "memory" / args.dataset / args.model_name.lower() / safe_question_name)
         if not os.path.exists(memory_path):
             os.makedirs(memory_path)
         with open(memory_path+'/mem', 'w', encoding='utf-8') as f:
@@ -465,8 +466,20 @@ if __name__ == '__main__':
 
     # 配置实验结果和日志保存路径
     sample_label = "all" if args.dataset_sample_num is None else args.dataset_sample_num
-    args.output_file = str(Path(args.output_dir) / f"CoG_data_{args.dataset}_sampleNum_{sample_label}_sampleSeed_{args.dataset_sample_seed}_modelName_{args.model_name.lower()}.jsonl")
-    logger = initialize_logger(args.output_dir, args.dataset, args.model_name, args.dataset_sample_num, args.dataset_sample_seed)
+    run_name = f"CoG_data_{args.dataset}_sampleNum_{sample_label}_sampleSeed_{args.dataset_sample_seed}_modelName_{args.model_name.lower()}"
+    output_root = Path(args.output_dir)
+    run_dir = output_root / run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    args.run_dir = str(run_dir)
+    args.output_file = str(run_dir / f"{run_name}.jsonl")
+    legacy_results = output_root / f"{run_name}.jsonl"
+    if legacy_results.is_file() and not Path(args.output_file).exists():
+        shutil.copy2(legacy_results, args.output_file)
+    legacy_log = output_root / f"{run_name}.log"
+    new_log = run_dir / f"{run_name}.log"
+    if legacy_log.is_file() and not new_log.exists():
+        shutil.copy2(legacy_log, new_log)
+    logger = initialize_logger(run_dir, args.dataset, args.model_name, args.dataset_sample_num, args.dataset_sample_seed)
     logger.info("\n===== Start running CoG | dataset=%s | model=%s =====", args.dataset, args.model_name)
 
     # 配置数据集，必要时采样

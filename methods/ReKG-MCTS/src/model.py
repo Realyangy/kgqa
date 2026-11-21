@@ -3,7 +3,7 @@ import logging
 import time
 
 from openai import OpenAI
-from prompt_list import answer_directly_prompt, answer_prompt
+from prompt_list import directly_answer_prompt, answer_prompt
 from utils import extract_answer
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ class LLM_Client:
         return raw_answer, extract_answer(raw_answer)
 
     def generate_direct_answer(self, question):
-        prompt = answer_directly_prompt.substitute(question=question)
+        prompt = directly_answer_prompt.substitute(question=question)
         raw_answer = self(user_prompt=prompt)[0]
         return raw_answer, extract_answer(raw_answer)
 

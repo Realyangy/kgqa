@@ -3,7 +3,7 @@ import math
 import random
 
 from kg_utils import KgSearchUtils
-from prompt_list import EVALUATE_STATE_PROMPT
+from prompt_list import evaluate_prompt
 from freebase_func import get_entity_name
 from utils import construct_triple, format_reasoning_path, parse_json_object
 
@@ -131,63 +131,44 @@ class MCTSNode:
 
 
 class MCTSPathFinder:
-    def __init__(
-        self,
-        question,
-        topic_entities,
-        llm,
-        evaluator=None,
-        relation_topk=5,
-        entity_topk=5,
-        max_depth=5,
-        max_iterations=2,
-        rollout_steps=2,
-        rollout_count=2,
-        beam_size=2,
-        score_threshold=0.8,
-        exploration_constant=0.5,
-    ):
+    def __init__(self, question, topic_entities, llm, evaluator=None,
+                    max_depth=5, max_iterations=2, exploration_constant=0.5,relation_topk=5, entity_topk=5, 
+                    rollout_steps=2, rollout_count=2, beam_size=2, score_threshold=0.8
+                ):
+        
         self.question = question
         self.llm = llm
         self.evaluator = evaluator if evaluator is not None else llm
         self.max_depth = max_depth
         self.max_iterations = max_iterations
+        self.exploration_constant = exploration_constant
         self.rollout_steps = rollout_steps
-        if rollout_count < 1:
-            raise ValueError("rollout_count must be at least 1")
         self.rollout_count = rollout_count
-        if beam_size < 1:
-            raise ValueError("beam_size must be at least 1")
         self.beam_size = beam_size
         self.score_threshold = score_threshold
-        self.exploration_constant = exploration_constant
 
+        # 提取起点实体的名称
         if isinstance(topic_entities, list):
-            entities_info = [
-                {"entity_id": entity_id, "entity_name": get_entity_name(entity_id)}
-                for entity_id in topic_entities
-            ]
+            entities_info = [{"entity_id": entity_id, "entity_name": get_entity_name(entity_id)} for entity_id in topic_entities]
         else:
-            entities_info = [
-                {"entity_id": entity_id, "entity_name": name}
-                for entity_id, name in topic_entities.items()
-            ]
+            entities_info = [{"entity_id": entity_id, "entity_name": name} for entity_id, name in topic_entities.items()]
 
+        # 构造根节点
         self.root = MCTSNode(
             entities_info=entities_info,
             visited_ids={entity["entity_id"] for entity in entities_info},
         )
-        self.kg_utils = KgSearchUtils(
-            question=question,
-            model=llm,
-            relation_topk=relation_topk,
-            entity_topk=entity_topk,
-        )
+
+        # 初始化KG工具
+        self.kg_utils = KgSearchUtils(question=question, model=llm, relation_topk=relation_topk, entity_topk=entity_topk)
+
         self.best_path = []
         self.best_path_value = 0.0
         self.best_path_source = None
         self.trace_events = []
 
+
+    # 更新最佳路径
     def _update_best_path(self, path, value, source):
         if not path or (self.best_path and value <= self.best_path_value):
             return False
@@ -196,74 +177,76 @@ class MCTSPathFinder:
         self.best_path_source = source
         return True
 
+
+    # MCTS主流程
     def search(self):
         if not self.root.entities_info:
             logger.warning("No topic entities found for question: %s", self.question)
             return []
 
         for iteration in range(self.max_iterations):
-            logger.info("Iteration %s/%s", iteration + 1, self.max_iterations)
+            logger.info("===== Iteration %s/%s =====", iteration + 1, self.max_iterations)
 
-            # 1. SELECT
-            logger.info("  [Main]Selecting...")
+            # 选择阶段
+            logger.info("[Main]Selection")
             leaf = self._select(self.root)
             if leaf is None:
-                logger.info("  [Main]No expandable node remains.")
+                logger.info("[Select]No expandable node remains.")
                 break
 
-            # 2. EXPAND
-            logger.info("  [Main]Expanding...")
+            # 扩展阶段
+            logger.info("[Main]Expansion")
             children = []
             if not leaf.is_terminal(self.max_depth):
                 children = self._expand(leaf)
 
+            # 成功扩展子节点
             if children:
                 children.sort(key=lambda child: child.v, reverse=True)
                 best_child = children[0]
-                logger.info("  [Main]%s", format_reasoning_path(best_child.path, fallback_sep=", "))
+                logger.info("[Expand]%s", format_reasoning_path(best_child.path, fallback_sep=", "))
                 self._update_best_path(best_child.path, best_child.v, "expanded_child")
+                
+                # 子节点价值高于阈值，直接用于回答
                 if self.best_path_value >= self.score_threshold:
-                    logger.info(
-                        "  [Main]Early stop triggered after expansion by %s value=%.3f",
-                        self.best_path_source,
-                        self.best_path_value,
-                    )
-                    logger.info(
-                        "Final best path: %s",
-                        format_reasoning_path(self.best_path, fallback_sep=", "),
-                    )
-                    logger.info("Path value: %.3f", self.best_path_value)
+                    logger.info("[Expand]Early stop triggered after expansion by %s | value=%.3f", self.best_path_source, self.best_path_value)
+                    logger.info("[Expand]Final best path: %s", format_reasoning_path(self.best_path, fallback_sep=", "))
+                    logger.info("[Expand]Path value: %.3f", self.best_path_value)
                     self.root.print_tree()
                     return self.best_path
+
+            # 扩展失败
             else:
-                logger.info("  [Main]No children expanded from this node.")
+                logger.info("[Expand]No children expanded from this node.")
                 if not leaf.children:
                     leaf.is_fully_expanded = True
-                    logger.info("  [Main]Marked node as terminal: no child paths.")
+                    logger.info("[Expand]Marked node as terminal: no child paths.")
 
-            # Simulate(C_l): UCB-tree traversal followed by policy rollout.
-            # The simulated suffix only estimates value; it is not answer evidence.
+            # 模拟阶段
+            logger.info("[Main]Simulation and Backpropagation")
             if leaf.children and len(leaf.path) < self.max_depth:
                 for index in range(self.rollout_count):
                     sim_path = self._simulate(leaf)
                     if not sim_path:
                         continue
+
+                    # 评估并回传
                     reward, explanation = self.evaluate(sim_path)
                     self._backpropagate(leaf, reward)
                     self.trace_events.append({
-                        "event": "rollout", "iteration": iteration + 1,
+                        "event": "rollout",
+                        "iteration": iteration + 1,
                         "selected_path": list(leaf.path),
                         "simulated_path": list(sim_path),
-                        "reward": reward, "reason": explanation,
+                        "reward": reward,
+                        "reason": explanation,
                     })
-                    logger.info("  [Main]Rollout %d/%d reward=%.3f path=%s",
-                                index + 1, self.rollout_count, reward,
-                                format_reasoning_path(sim_path, fallback_sep=", "))
+                    logger.info("[Simulate]Rollout %d/%d | reward=%.3f | path=%s", index + 1, self.rollout_count, reward, format_reasoning_path(sim_path, fallback_sep=", "))
 
-        logger.info("  [Main]MCTS iterations completed.")
+        # 迭代终止时，根据节点的平均奖励选择最佳节点用于生成答案
+        logger.info("[Main]MCTS iterations completed.")
         best_node = self._get_best_node()
         if best_node:
-            # Use backpropagated average reward for tree paths at search end.
             self.best_path = list(best_node.path)
             self.best_path_value = best_node.average_reward
             self.best_path_source = "tree"
@@ -273,33 +256,30 @@ class MCTSPathFinder:
         self.root.print_tree()
         return self.best_path
 
+
+    # 调用LLM评估KG路径
     def evaluate(self, triples):
         if not triples:
             return 0.0, None
-
-        if (
-            isinstance(triples, tuple)
-            and len(triples) == 3
-            and not isinstance(triples[0], (list, tuple))
-        ):
+        if (isinstance(triples, tuple) and len(triples) == 3 and not isinstance(triples[0], (list, tuple))):
             triples = [triples]
 
         formatted_triples = [f"{h}, {r}, {t}" for h, r, t in triples]
         triples_str = "\n".join(formatted_triples)
-        prompt = EVALUATE_STATE_PROMPT.substitute(
-            question=self.question,
-            triple=triples_str,
-        )
+        prompt = evaluate_prompt.substitute(question=self.question, triple=triples_str)
         output = self.evaluator(user_prompt=prompt)[0]
         result = parse_json_object(output)
         score, reason = result.get("score"), result.get("reason")
+
         if type(score) not in (int, float) or not 0 <= score <= 1:
             raise ValueError("Path score must be a number between 0 and 1")
         if not isinstance(reason, str):
             raise ValueError("Path score reason must be a string")
-        logger.info("Path evaluation: score=%.3f, reason=%s, path=%s", score, reason, format_reasoning_path(triples))
+        logger.info("[Evaluation]path=%s, score=%.3f", format_reasoning_path(triples), score)
         return float(score), reason
 
+
+    # 选择阶段，逐层计算节点的UCB值，直到叶子节点
     def _select(self, node):
         if node.is_terminal(self.max_depth):
             return None
@@ -312,51 +292,57 @@ class MCTSPathFinder:
                 return selected
         return None
 
+
+    # 扩展阶段，为选择的叶子节点扩展新节点
     def _expand(self, node):
         if node.is_terminal(self.max_depth):
             return []
 
         existing_children = list(node.children)
         children = []
+
+        # 遍历当前节点的实体
         for entity_info in list(node.entities_info):
             entity_id = entity_info["entity_id"]
+            entity_name = entity_info["entity_name"]
+
+            # 跳过已完全展开的实体
             if entity_id in node.fully_expanded_entities:
                 continue
-            entity_name = entity_info["entity_name"]
+
+            # 关系扩展
             incoming = node.entity_incoming.get(entity_id)
             relation_history = [incoming] if incoming else []
-
             relations = self.kg_utils.relation_search_prune(
                 entity_id=entity_id,
                 entity_name=entity_name,
                 relation_history=relation_history,
                 path_history=node.path,
             )
+            # 未扩展出关系时标记该实体完全展开
             if not relations:
                 node.mark_entity_fully_expanded(entity_id)
                 continue
 
+            # 去除已经处理过的关系
             remaining_relations = [
                 rel_info for rel_info in relations
                 if (rel_info["relation"], rel_info["head"]) not in node.expanded_relations.setdefault(entity_id, set())
             ]
-            logger.debug("    [Entity] eid=%s, ename=%s, remain_rels=%s",
-                         entity_id, entity_name, len(remaining_relations))
+            logger.debug("[Relation Expansion]Entity=%s, num_remain_rels=%s", entity_name, len(remaining_relations))
             if not remaining_relations:
                 node.mark_entity_fully_expanded(entity_id)
                 continue
 
+            # 遍历扩展的关系，进行实体扩展
             for relation_info in remaining_relations:
                 rel_name = relation_info["relation"]
-                logger.debug("      [Relation]Current relation: %s, Direction: %s", rel_name, relation_info["head"])
+                logger.debug("[Entity Expansion]Current relation: %s, Direction: %s", rel_name, relation_info["head"])
                 relation_key = (rel_name, relation_info["head"])
                 node.expanded_relations[entity_id].add(relation_key)
 
-                target_entities = self.kg_utils.entity_search(
-                    entity_id,
-                    rel_name,
-                    relation_info["head"],
-                )
+                # 实体扩展
+                target_entities = self.kg_utils.entity_search(entity_id, entity_name, rel_name, relation_info["head"])
                 target_entities = [
                     target_id
                     for target_id in target_entities
@@ -364,15 +350,12 @@ class MCTSPathFinder:
                 ]
                 if not target_entities:
                     continue
+                candidate_ids = self.kg_utils.entity_prune(target_entities, node, rel_name)
 
-                candidate_ids = self.kg_utils.entity_prune(
-                    target_entities, node, rel_name,
-                )
+                # 为扩展的实体构建新节点
                 for target_id in candidate_ids:
                     target_name = get_entity_name(target_id)
-                    new_triple = construct_triple(
-                        entity_name, rel_name, target_name, relation_info["head"],
-                    )
+                    new_triple = construct_triple(entity_name, rel_name, target_name, relation_info["head"])
                     children.append(node.add_child(
                         entity_id=entity_id,
                         new_entity_info={"entity_id": target_id, "entity_name": target_name},
@@ -384,12 +367,11 @@ class MCTSPathFinder:
             if len(node.expanded_relations[entity_id]) >= len(relations):
                 node.mark_entity_fully_expanded(entity_id)
 
-        if node.entities_info and all(
-            entity["entity_id"] in node.fully_expanded_entities
-            for entity in node.entities_info
-        ):
+        # 当前节点所有实体都已完全展开后，标记当前节点已满
+        if node.entities_info and all(entity["entity_id"] in node.fully_expanded_entities for entity in node.entities_info):
             node.is_fully_expanded = True
 
+        # 遍历评估所有新节点，注意，这里不是模拟评估，只是对所有节点赋予一个初始的价值
         for child in children:
             score, explanation = self.evaluate(child.path)
             child.v = score
@@ -397,25 +379,25 @@ class MCTSPathFinder:
             child.visits = 1
             child.total_reward = score
 
+        # 保留beam_size个最优新节点
         children.sort(key=lambda child: child.v, reverse=True)
         retained = children[:max(0, self.beam_size - len(existing_children))]
         node.children = existing_children + retained
         self.trace_events.append({
-            "event": "expand", "selected_path": list(node.path),
-            "evaluated_children": [
-                {"path": list(child.path), "score": child.v} for child in children
-            ],
+            "event": "expand",
+            "selected_path": list(node.path),
+            "evaluated_children": [{"path": list(child.path), "score": child.v} for child in children],
             "retained_paths": [list(child.path) for child in retained],
         })
-        logger.info("  [Main]Evaluated %s children; retained %s (beam size %s).",
-                    len(children), len(retained), self.beam_size)
+        logger.info("[Entity Expansion]Evaluated %s children; retained %s.", len(children), len(retained))
         return retained
 
+
+    # 模拟阶段
     def _simulate(self, node):
-        # Continue from C_l through any children already created in this
-        # expansion, using the same UCB rule as tree selection.  The subsequent
-        # roll-forward phase samples one relation at each step.
         rollout_node = node
+
+        # 先从node往下根据UCB选择扩展得到的新节点，作为模拟的起点
         while rollout_node.children and not rollout_node.is_terminal(self.max_depth):
             next_node = self._get_best_child(rollout_node)
             if next_node is None:
@@ -428,16 +410,15 @@ class MCTSPathFinder:
         incoming = rollout_node.entity_incoming.get(current_entity["entity_id"]) if current_entity else None
         relation_history = [incoming] if incoming else []
 
+        # 计算剩余跳数
         remaining_depth = self.max_depth - len(sim_path)
-        steps_left = (
-            remaining_depth
-            if self.rollout_steps <= 0
-            else min(self.rollout_steps, remaining_depth)
-        )
+        steps_left = (remaining_depth if self.rollout_steps <= 0 else min(self.rollout_steps, remaining_depth))
+
         for _ in range(max(0, steps_left)):
             if current_entity is None:
                 break
 
+            # 关系扩展
             relations = self.kg_utils.relation_search_prune(
                 entity_id=current_entity["entity_id"],
                 entity_name=current_entity["entity_name"],
@@ -446,20 +427,21 @@ class MCTSPathFinder:
             )
             if not relations:
                 break
-
             advanced = False
             remaining_relations = list(relations)
+
+            # 从候选关系中将得分归一化为概率后采样
             while remaining_relations:
                 max_score = max(relation["score"] for relation in remaining_relations)
                 weights = [math.exp(relation["score"] - max_score) for relation in remaining_relations]
-                relation_info = random.choices(
-                    remaining_relations, weights=weights, k=1
-                )[0]
+                relation_info = random.choices(remaining_relations, weights=weights, k=1)[0]
                 remaining_relations.remove(relation_info)
-                logger.info("  [Rollout] Sampled relation: %s (score=%.3f)",
-                            relation_info["relation"], relation_info["score"])
+                logger.info("[Rollout]Sampled relation: %s | score=%.3f", relation_info["relation"], relation_info["score"])
+
+                # 实体扩展
                 targets = self.kg_utils.entity_search(
                     current_entity["entity_id"],
+                    current_entity["entity_name"],
                     relation_info["relation"],
                     relation_info["head"],
                 )
@@ -475,16 +457,18 @@ class MCTSPathFinder:
                     entities_info=[current_entity], triples=sim_path,
                     visited_ids=current_visited,
                 )
-                candidate_ids = self.kg_utils.entity_prune(
-                    targets, temp_node, relation_info["relation"],
-                )
+                candidate_ids = self.kg_utils.entity_prune(targets, temp_node, relation_info["relation"])
                 if not candidate_ids:
                     continue
+                    
+                # 取第一个候选实体作为下一步起点
                 target_id = candidate_ids[0]
                 target_name = get_entity_name(target_id)
                 sim_path.append(construct_triple(
-                    current_entity["entity_name"], relation_info["relation"],
-                    target_name, relation_info["head"],
+                    current_entity["entity_name"],
+                    relation_info["relation"],
+                    target_name,
+                    relation_info["head"],
                 ))
                 current_visited.add(target_id)
                 current_entity = {"entity_id": target_id, "entity_name": target_name}
@@ -497,12 +481,15 @@ class MCTSPathFinder:
 
         return sim_path
 
+
+    # 回传节点模拟后的价值
     def _backpropagate(self, node, reward):
         current = node
         while current is not None:
             current.visits += 1
             current.total_reward += reward
             current = current.parent
+
 
     def _get_best_child(self, node):
         if not node.children:
@@ -511,6 +498,7 @@ class MCTSPathFinder:
             node.children,
             key=lambda child: child.get_ucb_value(self.exploration_constant),
         )
+
 
     def _get_best_node(self):
         nodes = []

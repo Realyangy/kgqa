@@ -1,11 +1,6 @@
 from string import Template
 
-# Adapted from the original REKG-MCTS prompts.py (ShawnKS/rekgmcts).
-# Preserve task guidance and complete few-shot content; JSON/numbered IDs
-# are the benchmark's output-format adaptations. Expansion path history
-# is supplied separately by build_relation_prune_prompt().
-
-extract_relation_prompt = Template('''Please retrieve $relation_num relations that contribute to the question and rate their contribution on a scale from 0 to 1. Choose only from the numbered relations (including their direction). Return valid JSON with a "scores" list; each item must contain "id" and "score" and may contain a "reason".
+relation_extract_prompt = Template('''Please retrieve $relation_num relations that contribute to the question and rate their contribution on a scale from 0 to 1. Choose only from the numbered relations (including their direction). Return valid JSON with a "scores" list; each item must contain "id" and "score" and may contain a "reason".
 Q: Name the president of the country whose main spoken language was Brahui in 1980?
 Topic Entity: Brahui Language
 Relations:
@@ -29,7 +24,8 @@ ${path_context}Relations:
 $relations
 A: ''')
 
-entity_p_prompt = Template('''Based on the question and path history, filter the most relevant $top_k entities from the candidate entities.
+
+entity_prune_prompt = Template('''Based on the question and path history, filter the most relevant $top_k entities from the candidate entities.
 Question: $question
 Current Entity: $current_entities
 Current Relation: $current_relation
@@ -38,15 +34,12 @@ Candidate Entities: $candidates
 
 Please output a valid JSON object with a "selected_ids" list of the numbered candidate IDs, in descending order of relevance. Different IDs remain distinct even when names are identical:''')
 
-EVALUATE_STATE_PROMPT = Template('''Your task is to rigorously evaluate whether the selected triplet from the knowledge graph is useful for reasoning toward answering the given question. Follow these steps carefully:
+
+evaluate_prompt = Template('''Your task is to rigorously evaluate whether the selected triplet from the knowledge graph is useful for reasoning toward answering the given question. Follow these steps carefully:
 
 EVALUATION CRITERIA:
-1. Does the triplet directly or indirectly mention entities or relationships from the question?
-If indirect, is the connection clear and meaningful?
-
-2. Does the triplet provide specific information that helps narrow down or answer the question?
-Is the information sufficient to make progress toward the answer, or is it too vague or tangential?
-
+1. Does the triplet directly or indirectly mention entities or relationships from the question? If indirect, is the connection clear and meaningful?
+2. Does the triplet provide specific information that helps narrow down or answer the question? Is the information sufficient to make progress toward the answer, or is it too vague or tangential?
 3. Do the triplets logically necessary or strongly supportive for constructing a reasoning path to the answer?Does it fill a critical gap in the reasoning process?
 
 SCORING GUIDELINES:
@@ -62,7 +55,7 @@ Provide a valid JSON object with a numeric "score" between 0.0 and 1.0 with one 
 
 Q: The artist nominated for The Long Winter lived where?
 T: Laura Ingalls Wilder -> people.person.places_lived -> Unknown
-A: {"score":0.5,"reason":"The triplet connects the author (key entity) to places_lived, but \"Unknown\" value makes it incomplete. While it indicates the KG has author residency data, the lack of concrete location requires supplementing with external knowledge."}
+A: {"score":0.5,"reason":"The triplet connects the author (key entity) to places_lived, but the Unknown value makes it incomplete. While it indicates the KG has author residency data, the lack of concrete location requires supplementing with external knowledge."}
 
 Q: What is the capital of France?
 T: France -> has.city -> Lyon,France -> has.city -> Paris
@@ -90,9 +83,10 @@ A: {"score":0.7,"reason":"While not directly stating authorship, confirming Kant
 
 Q: $question
 T: $triple
-A:''')
+A: ''')
 
-answer_directly_prompt = Template('''Answer the question using your knowledge. Return a JSON object with string "reason" and "answer" as a string or null when no answer can be determined.
+
+directly_answer_prompt = Template('''Answer the question using your knowledge. Return a JSON object with string "reason" and "answer" as a string or null when no answer can be determined.
 
 Question: $question
 Output:''')

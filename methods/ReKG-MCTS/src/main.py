@@ -146,8 +146,10 @@ def main():
     for item in tqdm(data, desc="Processing"):
         question = item[question_key]
         previous = previous_results.get(question)
-        if previous is not None and previous.get("results") != "error" and all(
-            key in previous for key in ("results", "call_num", "total_token", "input_token", "output_token", "time")
+        if (
+            previous is not None and
+            previous.get("results") != "error" and
+            all(key in previous for key in ("results", "call_num", "total_token", "input_token", "output_token", "time"))
         ):
             continue
         if previous is not None:

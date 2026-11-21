@@ -2,7 +2,7 @@ import json
 import re
 from pathlib import Path
 
-from prompt_list import extract_relation_prompt
+from prompt_list import relation_extract_prompt
 
 
 def prepare_dataset(dataset_name):
@@ -101,7 +101,7 @@ def build_relation_prune_prompt(question, entity_name, total_relations, retain_t
         f"[{index}] [{'outgoing' if candidate['head'] else 'incoming'}] {candidate['relation']}"
         for index, candidate in enumerate(total_relations, start=1)
     )
-    return extract_relation_prompt.substitute(
+    return relation_extract_prompt.substitute(
         relation_num=retain_topk, question=question,
         entity_name=entity_name, relations=relations,
         path_context=(

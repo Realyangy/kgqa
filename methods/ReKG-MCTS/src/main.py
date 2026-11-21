@@ -51,7 +51,7 @@ def parse_args():
     parser.add_argument("--rollout_steps", type=int, default=2, help="Maximum new hops in each rollout")
     parser.add_argument("--rollout_count", type=int, default=2, help="Number of rollouts per MCTS iteration")
     parser.add_argument("--beam_size", type=int, default=2, help="Maximum child paths retained per expansion")
-    parser.add_argument("--reward_threshold", type=float, default=0.8)
+    parser.add_argument("--reward_threshold", type=float, default=0.9)
     parser.add_argument("--random_seed", type=int, default=42)
     parser.add_argument("--save_detail", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--output_dir", default="/home/flyvideo/Sata2/lyy/kgqa/methods/ReKG-MCTS/output")

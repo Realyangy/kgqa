@@ -63,7 +63,7 @@ class KgSearchUtils:
 
         # 关系搜索
         total_relations = self.get_relations(entity_id, blocked_reverse=blocked_reverse)
-        logger.info("[Expansion]%s has %d candidates", entity_name, len(total_relations))
+        logger.info("%s has %d candidates", entity_name, len(total_relations))
         if not total_relations:
             return []
 
@@ -73,11 +73,11 @@ class KgSearchUtils:
         llm_output = self.model(user_prompt=prompt)[0]
         pruned_relations = clean_relations(llm_output, entity_id, total_relations)
         if not pruned_relations:
-            logger.warning("[Expansion]Relation pruning failed for %s.", entity_name)
+            logger.warning("Relation pruning failed for %s.", entity_name)
             return []
 
         pruned_relations.sort(key=lambda item: item.get("score", 0.0), reverse=True)
-        logger.info("[Expansion]Selected relations:\n%s", pruned_relations[:retain_topk])
+        logger.info("Selected relations:\n%s", "\n".join(pruned_relations[:retain_topk]))
         return pruned_relations[:retain_topk]
 
 
@@ -94,7 +94,7 @@ class KgSearchUtils:
 
         entity_ids = freebase_func.replace_entities_prefix(entities)
         valid_ids = [entity_id for entity_id in entity_ids if freebase_func.is_valid_entity(entity_id)]
-        logger.info("[Expansion]%s -> %s has %d candidates.", entity_name, relation, len(valid_ids))
+        logger.info("%s -> %s has %d candidates.", entity_name, relation, len(valid_ids))
         return valid_ids
 
 
@@ -113,7 +113,7 @@ class KgSearchUtils:
         named = [(entity_id, names[entity_id]) for entity_id in candidates if names[entity_id] != "Unknown"]
         if not named:
             chosen = random.sample(candidates, min(self.entity_topk, len(candidates)))
-            logger.info("[Expansion]All %d candidates unnamed, retaining %d random IDs.", len(candidates), len(chosen))
+            logger.info("All %d candidates unnamed, retaining %d random IDs.", len(candidates), len(chosen))
             return chosen
         if len(named) <= self.entity_topk:
             return [entity_id for entity_id, _ in named]

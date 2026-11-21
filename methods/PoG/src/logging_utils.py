@@ -119,7 +119,7 @@ def finish_detail(record):
         import hashlib
         import re
         output = Path(active.pop("_output_file"))
-        details_dir = output.parent / output.stem / "details"
+        details_dir = output.parent / "details"
         details_dir.mkdir(parents=True, exist_ok=True)
         raw_id = str(active["id"])
         safe_id = re.sub(r"[^\w.-]", "_", raw_id)[:120]

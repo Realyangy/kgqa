@@ -120,7 +120,8 @@ def main():
     initialize_logger(output_file)
     
     # 记录本次运行的实际参数和服务配置
-    logger.info("Arguments: %s", json.dumps(vars(args), ensure_ascii=False, sort_keys=True))
+    safe_args = {key: value for key, value in vars(args).items() if key != "api_key"}
+    logger.info("Arguments: %s", json.dumps(vars(safe_args), ensure_ascii=False, sort_keys=True))
     logger.info("Model path: %s", args.model_path)
     logger.info("Model API: %s", args.base_url)
     logger.info("Freebase endpoint: %s", SPARQLPATH)

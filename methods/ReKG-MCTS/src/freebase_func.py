@@ -1,35 +1,30 @@
 import os
 import time
-
 from SPARQLWrapper import JSON, SPARQLWrapper
-
 
 SPARQLPATH = "http://localhost:3001/sparql"
 
+
+# 记录调用过的SPARQL查询
 _SPARQL_TRACE = None
-
-
 def set_sparql_trace(trace):
-    """Collect SPARQL queries for the current question (single-threaded runner)."""
     global _SPARQL_TRACE
     _SPARQL_TRACE = trace
 
-sparql_search_out_rel = """
-PREFIX ns: <http://rdf.freebase.com/ns/>
+
+sparql_search_out_rel = """PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?relation
 WHERE {
     ns:%s ?relation ?x .
 }"""
 
-sparql_search_in_rel = """
-PREFIX ns: <http://rdf.freebase.com/ns/>
+sparql_search_in_rel = """PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?relation
 WHERE {
     ?x ?relation ns:%s .
 }"""
 
-sparql_search_tail_entities = """
-PREFIX ns: <http://rdf.freebase.com/ns/>
+sparql_search_tail_entities = """PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?Entity
 WHERE {
     ns:%s ns:%s ?Entity .
@@ -37,8 +32,7 @@ WHERE {
 LIMIT 1000
 """
 
-sparql_search_head_entities = """
-PREFIX ns: <http://rdf.freebase.com/ns/>
+sparql_search_head_entities = """PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?Entity
 WHERE {
     ?Entity ns:%s ns:%s .
@@ -46,8 +40,7 @@ WHERE {
 LIMIT 1000
 """
 
-# Batch name resolution: prefer English names and aliases; follow sameAs to a
-# *named* linked entity instead of treating the linked URI as a name.
+
 sparql_ids2names = """PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?entity ?targetEntity ?priority
 WHERE {
@@ -70,17 +63,9 @@ WHERE {
 }
 """
 
+
 def disable_net_proxy():
-    for var in [
-        "http_proxy",
-        "https_proxy",
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "all_proxy",
-        "ALL_PROXY",
-        "no_proxy",
-        "NO_PROXY",
-    ]:
+    for var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"]:
         os.environ.pop(var, None)
 
 

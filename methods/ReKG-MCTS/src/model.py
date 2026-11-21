@@ -3,7 +3,7 @@ import logging
 import time
 
 from openai import OpenAI
-from prompt_list import answer_directly_prompt
+from prompt_list import answer_directly_prompt, answer_prompt
 from utils import extract_answer
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,6 @@ class LLM_Client:
         self.client = OpenAI(base_url=base_url, api_key=api_key)
         self.temperature = temperature
         self.max_new_tokens = max_new_tokens
-        self.answer_prompt = None
         self.prompt_history = None
         self.usage_stats = {"num_calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
@@ -25,12 +24,9 @@ class LLM_Client:
     def get_usage_snapshot(self):
         return dict(self.usage_stats)
 
-    def set_answer_prompt(self, prompt):
-        self.answer_prompt = prompt
-
     def generate_answer(self, question, cluster_chain_of_entities, system_prompt=None):
         chain = "\n".join(f"{head}, {relation}, {tail}" for head, relation, tail in cluster_chain_of_entities)
-        prompt = self.answer_prompt.substitute(question=question, knowledge_triplets=chain or "None")
+        prompt = answer_prompt.substitute(question=question, knowledge_triplets=chain or "None")
         raw_answer = self(system_prompt=system_prompt, user_prompt=prompt)[0]
         return raw_answer, extract_answer(raw_answer)
 

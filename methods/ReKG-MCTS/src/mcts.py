@@ -146,7 +146,6 @@ class MCTSPathFinder:
         beam_size=2,
         score_threshold=0.8,
         exploration_constant=0.5,
-        sample_seed=0,
     ):
         self.question = question
         self.llm = llm
@@ -183,7 +182,6 @@ class MCTSPathFinder:
             model=llm,
             relation_topk=relation_topk,
             entity_topk=entity_topk,
-            sample_seed=sample_seed,
         )
         self.best_path = []
         self.best_path_value = 0.0
@@ -333,7 +331,6 @@ class MCTSPathFinder:
                 entity_name=entity_name,
                 relation_history=relation_history,
                 path_history=node.path,
-                include_path_history=True,
             )
             if not relations:
                 node.mark_entity_fully_expanded(entity_id)
@@ -370,7 +367,6 @@ class MCTSPathFinder:
 
                 candidate_ids = self.kg_utils.entity_prune(
                     target_entities, node, rel_name,
-                    relation_info["head"], entity_info,
                 )
                 for target_id in candidate_ids:
                     target_name = get_entity_name(target_id)
@@ -447,7 +443,6 @@ class MCTSPathFinder:
                 entity_name=current_entity["entity_name"],
                 relation_history=relation_history,
                 path_history=sim_path,
-                include_path_history=True,
             )
             if not relations:
                 break
@@ -482,7 +477,6 @@ class MCTSPathFinder:
                 )
                 candidate_ids = self.kg_utils.entity_prune(
                     targets, temp_node, relation_info["relation"],
-                    relation_info["head"], current_entity, topk=self.kg_utils.entity_topk,
                 )
                 if not candidate_ids:
                     continue

@@ -115,7 +115,7 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     output_file = str(run_dir / f"{run_name}.jsonl")
     logger = initialize_logger(output_file)
-    logger.info("\n===== Start CoR | dataset=%s samples=%d/%d seed=%d model=%s =====", args.dataset, len(datas), total_size, args.dataset_sample_seed, args.model_name)
+    logger.info("\n===== Start CoR | dataset=%s | samples=%d/%d | seed=%d | model=%s =====", args.dataset, len(datas), total_size, args.dataset_sample_seed, args.model_name)
 
     # 记录本次运行的实际参数和服务配置
     logger.info("Arguments: %s", json.dumps(vars(args), ensure_ascii=False, sort_keys=True))

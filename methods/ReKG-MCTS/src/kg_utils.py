@@ -34,13 +34,11 @@ class KgSearchUtils:
         model,
         relation_topk=5,
         entity_topk=5,
-        sample_seed=0,
     ):
         self.question = question
         self.model = model
         self.relation_topk = relation_topk
         self.entity_topk = entity_topk
-        self.sample_seed = sample_seed
 
     def get_relations(self, entity_id, blocked_reverse=None):
         if not is_freebase_entity_id(entity_id):
@@ -87,8 +85,6 @@ class KgSearchUtils:
         entity_name,
         path_history=None,
         relation_history=None,
-        topk=None,
-        include_path_history=False,
     ):
         blocked_reverse = None
         if relation_history:
@@ -100,23 +96,22 @@ class KgSearchUtils:
         if not total_relations:
             return []
 
-        requested_topk = topk or self.relation_topk
-        retain_topk = min(requested_topk, len(total_relations))
+        retain_topk = min(self.relation_topk, len(total_relations))
         prompt = build_relation_prune_prompt(
             self.question,
             entity_name,
             total_relations,
             retain_topk,
-            path_history=path_history if include_path_history else None,
+            path_history=path_history,
         )
         llm_output = self.model(user_prompt=prompt)[0]
-        success, pruned_relations = clean_relations(
+        pruned_relations = clean_relations(
             llm_output,
             entity_id,
             total_relations,
         )
 
-        if not success or not pruned_relations:
+        if not pruned_relations:
             logger.warning(
                 "Relation pruning failed for %s. raw_output=%r",
                 entity_name,
@@ -146,14 +141,13 @@ class KgSearchUtils:
         logger.info("Entity search: %s / %s, %d candidates", entity_id, relation, len(valid_ids))
         return valid_ids
 
-    def entity_prune(self, candidate_entities, node, relation, head=True,
-                     source_entity_info=None, topk=None):
+    def entity_prune(self, candidate_entities, node, relation):
         """Keep unnamed IDs when all candidates lack names, as in local ToG."""
         # Cap candidates at 50 ID values before resolving names.
         candidates = sorted(set(candidate_entities))
         if not candidates:
             return []
-        limit = self.entity_topk if topk is None else topk
+        limit = self.entity_topk
         if limit < 1:
             return []
         if len(candidates) > 50:

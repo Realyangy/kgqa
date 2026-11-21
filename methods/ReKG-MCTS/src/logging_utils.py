@@ -1,4 +1,3 @@
-"""Run logging shared by the ReKG-MCTS modules."""
 import logging
 from pathlib import Path
 
@@ -8,8 +7,8 @@ class FileOnlyFilter(logging.Filter):
         return not getattr(record, "file_only", False)
 
 
-def initialize_logger(log_file):
-    path = Path(log_file)
+def initialize_logger(output_file):
+    path = Path(output_file).with_suffix(".log")
     path.parent.mkdir(parents=True, exist_ok=True)
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -23,4 +22,5 @@ def initialize_logger(log_file):
     console_handler.addFilter(FileOnlyFilter())
     root.addHandler(file_handler)
     root.addHandler(console_handler)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     return logging.getLogger(__name__)

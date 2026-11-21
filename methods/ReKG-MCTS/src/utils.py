@@ -1,7 +1,20 @@
 import json
 import re
+from pathlib import Path
 
 from prompt_list import extract_relation_prompt
+
+
+def prepare_dataset(dataset_name):
+    datasets = {
+        "cwq": ("cwq.json", "question"),
+        "webqsp": ("webqsp.json", "RawQuestion"),
+        "grailqa": ("graliqa.json", "question"),
+    }
+    filename, question_key = datasets[dataset_name]
+    data_path = Path(__file__).resolve().parents[3] / "data" / "test" / filename
+    with data_path.open(encoding="utf-8") as stream:
+        return json.load(stream), question_key
 
 
 def parse_json_object(response):
@@ -50,7 +63,7 @@ def clean_relations(response, entity_id, relation_candidates):
         candidate = relation_candidates[candidate_id - 1]
         relations.append({"entity": entity_id, "relation": candidate["relation"],
                           "head": candidate["head"], "score": float(score)})
-    return bool(relations), relations
+    return relations
 
 
 def extract_answer(response):

@@ -8,6 +8,12 @@ from sentence_transformers import util
 
 from prompt_list import *
 
+# 每题统计逻辑调用次数和所有已返回的 token。
+LLM_STATS = {"calls": 0, "total": 0, "input": 0, "output": 0}
+
+def reset_llm_stats():
+    LLM_STATS.update(calls=0, total=0, input=0, output=0)
+
 def retrieve_top_docs(query, docs, model, width=3):
     query_emb = model.encode(query)
     doc_emb = model.encode(docs)
@@ -20,67 +26,41 @@ def retrieve_top_docs(query, docs, model, width=3):
 
 # 调用LLM，计算调用的token开销
 def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="qwen3.5-27b"):
-    client = openai.OpenAI(api_key=api_key, base_url=base_url)
-    messages = [
-        {
-            "role": "system",
-            "content": "You are an AI assistant that helps people find information. Always respond in valid JSON format."
-        },
-        {
-            "role": "user",
-            "content": prompt
-        }
-    ]
-
+    LLM_STATS["calls"] += 1
+    client = openai.OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
+    messages = [{"role": "system", "content": "You are an AI assistant that helps people find information. Always respond in valid JSON format."}, {"role": "user", "content": prompt}]
     extra_body = None
     if "qwen" in engine.lower():
         extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
-    elif "deepseek" in engine.lower():  
+    elif "deepseek" in engine.lower():
         extra_body = {"thinking": {"type": "disabled"}}
-
-    completion = client.chat.completions.create(
-            model=engine,
-            messages = messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            frequency_penalty=0,
-            presence_penalty=0,
-            response_format={"type": "json_object"},
-            extra_body=extra_body
-            )
-
-    choice = completion.choices[0]
-    result = choice.message.content
-
-    # 检查输出是否被截断
-    if choice.finish_reason == "length":
-        raise ValueError("LLM JSON output was truncated")
-
-    # 检查空输出
-    if not result or not result.strip():
-        raise ValueError("LLM returned empty JSON")
-
-    # 验证返回的是JSON对象
-    try:
-        data = json.loads(result)
-    except json.JSONDecodeError as error:
-        raise ValueError("LLM returned invalid JSON") from error
-
-    if not isinstance(data, dict):
-        raise ValueError("LLM JSON output must be an object")
-
-    # 统计Token开销
-    if completion.usage is None:
-        raise ValueError("LLM response is missing token usage")
-
-    token_num = {
-        "total": completion.usage.total_tokens,
-        "input": completion.usage.prompt_tokens,
-        "output": completion.usage.completion_tokens
-    }
-
-    record_llm(prompt, result, token_num, model=engine, temperature=temperature, max_tokens=max_tokens)
-    return result, token_num
+    token_num = {"total": 0, "input": 0, "output": 0}
+    for attempt in range(3):
+        try:
+            completion = client.chat.completions.create(model=engine, messages=messages, temperature=temperature, max_tokens=max_tokens, frequency_penalty=0, presence_penalty=0, response_format={"type": "json_object"}, extra_body=extra_body)
+            usage = completion.usage
+            if usage is None:
+                logger.warning("LLM response has no token usage; token counts are unknown for this attempt.")
+            attempt_tokens = {"total": (usage.total_tokens or 0) if usage else 0, "input": (usage.prompt_tokens or 0) if usage else 0, "output": (usage.completion_tokens or 0) if usage else 0}
+            for key in token_num:
+                token_num[key] += attempt_tokens[key]
+            for key in ("total", "input", "output"):
+                LLM_STATS[key] += attempt_tokens[key]
+            choice = completion.choices[0]
+            result = choice.message.content
+            if choice.finish_reason == "length":
+                raise ValueError("LLM JSON output was truncated")
+            if not result or not result.strip():
+                raise ValueError("LLM returned empty JSON")
+            if not isinstance(json.loads(result), dict):
+                raise ValueError("LLM JSON output must be an object")
+            record_llm(prompt, result, token_num, model=engine, temperature=temperature, max_tokens=max_tokens)
+            return result, token_num
+        except Exception as error:
+            logger.warning("LLM request attempt %d/3 failed: %s", attempt + 1, error)
+            if attempt == 2:
+                raise RuntimeError(f"Failed to call LLM after 3 attempts: {error}") from error
+            time.sleep(2)
 
 
 # 解析LLM输出的JSON对象
@@ -148,7 +128,7 @@ def convert_dict_name(ent_rel_ent_dict, entid_name):
 # 保存单样本结果
 def save_2_jsonl(question, question_string, answer, cluster_chain_of_entities, call_num, all_t, start_time, output_file):
     tt = time.time()-start_time
-    result = {question_string:question, "results": answer, "reasoning_chains": cluster_chain_of_entities, "call_num": call_num, "total_token": all_t['total'], "input_token": all_t['input'], "output_token": all_t['output'], "time": tt}
+    result = {question_string: question, "results": answer, "reasoning_chains": cluster_chain_of_entities, "call_num": LLM_STATS["calls"], "total_token": LLM_STATS["total"], "input_token": LLM_STATS["input"], "output_token": LLM_STATS["output"], "time": tt}
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as outfile:
         json_str = json.dumps(result, ensure_ascii=False)
@@ -156,17 +136,17 @@ def save_2_jsonl(question, question_string, answer, cluster_chain_of_entities, c
     finish_detail(result)
 
 
-def save_error_result(question, question_string, output_file):
+def save_error_result(question, question_string, output_file, start_time):
     """Save a failed sample in the same schema as a normal PoG result."""
     error_result = {
         question_string: question,
         "results": "error",
         "reasoning_chains": None,
-        "call_num": 0,
-        "total_token": 0,
-        "input_token": 0,
-        "output_token": 0,
-        "time": 0,
+        "call_num": LLM_STATS["calls"],
+        "total_token": LLM_STATS["total"],
+        "input_token": LLM_STATS["input"],
+        "output_token": LLM_STATS["output"],
+        "time": time.time() - start_time,
     }
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     with open(output_file, "a", encoding="utf-8") as outfile:

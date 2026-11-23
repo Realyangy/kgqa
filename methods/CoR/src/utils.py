@@ -14,7 +14,7 @@ class LLMAPI:
         if not api_key:
             raise ValueError("The selected model's API key is not configured")
         self.model_name = model_name
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
         self.reset_usage()
 
     def reset_usage(self):
@@ -41,11 +41,9 @@ class LLMAPI:
         # as one logical agent action, but their returned tokens are accumulated.
         for attempt in range(3):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name, messages=messages, temperature=temperature,
-                    max_tokens=max_tokens, frequency_penalty=0, presence_penalty=0,
-                    response_format={"type": "json_object"}, extra_body=extra_body
-                )
+                response = self.client.chat.completions.create(model=self.model_name, messages=messages, temperature=temperature, max_tokens=max_tokens, frequency_penalty=0, presence_penalty=0, response_format={"type": "json_object"}, extra_body=extra_body)
+                if response.usage is None:
+                    logging.warning("LLM response has no token usage; token counts are unknown for this attempt.")
                 if response.usage:
                     usage = {
                         "input_tokens": response.usage.prompt_tokens or 0,

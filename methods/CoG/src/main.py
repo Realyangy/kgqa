@@ -48,6 +48,7 @@ def process_question(data, args, question_string, model, retriever):
     start_time = time.time()
     call_num = 0
     all_tokens = {'total': 0, 'input': 0, 'output': 0}
+    reset_llm_stats()
     begin_detail(data, question, args.output_file, enabled=args.save_detail)
 
     try:
@@ -414,6 +415,10 @@ def disable_net_proxy():
         os.environ.pop(var, None)
 
 
+def sample_count(value):
+    return None if value.lower() == "none" else int(value)
+
+
 MODELS_DICT = {
     "Qwen3.5-27b-AWQ-4bit": {
         "model_path": "/home/flyvideo/Sata2/Models/LLM/Qwen3.5-27B-AWQ-4bit",
@@ -436,7 +441,7 @@ MODELS_DICT = {
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
-    parser.add_argument("--dataset_sample_num", type=int, default=500, help="Number of examples; omit to run the full dataset.")
+    parser.add_argument("--dataset_sample_num", type=sample_count, default=500, help="Number of examples; omit to run the full dataset.")
     parser.add_argument("--dataset_sample_seed", type=int, default=42)
     parser.add_argument("--model_name", type=str, default="DeepSeekV4.1-Flash", choices=MODELS_DICT.keys())
     parser.add_argument("--max_length", type=int, default=4096, help="the max length of LLMs output.")

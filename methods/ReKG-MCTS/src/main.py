@@ -15,6 +15,10 @@ from logging_utils import initialize_logger
 from freebase_func import SPARQLPATH, disable_net_proxy, set_sparql_trace
 
 
+def sample_count(value):
+    return None if value.lower() == "none" else int(value)
+
+
 MODELS_DICT = {
     "Qwen3.5-27b-AWQ-4bit": {
         "model_path": "/home/flyvideo/Sata2/Models/LLM/Qwen3.5-27B-AWQ-4bit",
@@ -38,7 +42,7 @@ logger = logging.getLogger(__name__)
 def parse_args():
     parser = argparse.ArgumentParser(description="ReKG-MCTS")
     parser.add_argument("--dataset", type=str.lower, choices=["cwq", "webqsp", "grailqa"], default="cwq")
-    parser.add_argument("--dataset_sample_num", "--num_sample", dest="dataset_sample_num", type=int, default=500)
+    parser.add_argument("--dataset_sample_num", "--num_sample", dest="dataset_sample_num", type=sample_count, default=500)
     parser.add_argument("--dataset_sample_seed", "--sample_seed", dest="dataset_sample_seed", type=int, default=42)
     parser.add_argument("--model_name", choices=MODELS_DICT, default="Qwen3.5-27b-AWQ-4bit")
     parser.add_argument("--temperature", type=float, default=0.5)

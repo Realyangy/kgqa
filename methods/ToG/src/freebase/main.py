@@ -10,6 +10,10 @@ from utils import *
 from freebase_func import *
 from logging_utils import append_search_trace, initialize_logger, begin_detail
 
+def sample_count(value):
+    return None if value.lower() == "none" else int(value)
+
+
 MODELS_DICT = {
     "Qwen3.5-27b-AWQ-4bit": {
         "model_path": "/home/flyvideo/Sata2/Models/LLM/Qwen3.5-27B-AWQ-4bit",
@@ -35,7 +39,7 @@ def disable_net_proxy():
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
-    parser.add_argument("--dataset_sample_num", type=int, default=500, help="Number of dataset samples to evaluate. Use None for all samples.")
+    parser.add_argument("--dataset_sample_num", type=sample_count, default=500, help="Number of dataset samples to evaluate. Use None for all samples.")
     parser.add_argument("--dataset_sample_seed", type=int, default=42, help="Random seed used only for selecting the evaluation subset.")
     parser.add_argument("--model_name", type=str, default="Qwen3.5-27b-AWQ-4bit", choices=MODELS_DICT.keys(), help="Model configuration name defined in MODELS_DICT.")
     parser.add_argument("--max_length", type=int, default=512, help="the max length of LLMs output.") # 注意，后面的实体打分时的max-length修改成1024了
@@ -59,6 +63,7 @@ if __name__ == '__main__':
 
     # 获取数据集，必要时进行采样
     datas, question_string = prepare_dataset(args.dataset)
+    args.question_string = question_string
     total_dataset_size = len(datas)
     if args.dataset_sample_num is not None:
         sample_rng = random.Random(args.dataset_sample_seed)
@@ -84,7 +89,7 @@ if __name__ == '__main__':
     logger.info("\n===== Start Running ToG on %s dataset =====", args.dataset)
 
     # 读取已有结果；每个问题仅保留结果文件中的最后一条记录
-    previous_results = load_previous_results(args.output_file)
+    previous_results = load_previous_results(args.output_file, question_string)
     logger.info("Loaded %d previous result records.", len(previous_results))
 
     # 开始遍历处理样本
@@ -125,7 +130,7 @@ if __name__ == '__main__':
             # 起点实体为空，则调用LLM直接回答
             if len(topic_entities) == 0:
                 results = generate_without_explored_paths(question, args)
-                save_2_jsonl(question, results, [], output_file=args.output_file, stats=args._llm_stats, start_time=start_time)
+                save_2_jsonl(question, results, [], output_file=args.output_file, stats=args._llm_stats, start_time=start_time, question_string=question_string)
                 continue
 
             # 用于标记当前问题是否已经生成并保存结果
@@ -222,7 +227,7 @@ if __name__ == '__main__':
                     # 足以回答问题
                     if stop:
                         logger.info("Reason result:\nToG stoped at depth %d.", depth)
-                        save_2_jsonl(question, results, cluster_chain_of_entities, output_file=args.output_file, stats=args._llm_stats, start_time=start_time)
+                        save_2_jsonl(question, results, cluster_chain_of_entities, output_file=args.output_file, stats=args._llm_stats, start_time=start_time, question_string=question_string)
                         flag_printed = True
                         break
 
@@ -271,10 +276,10 @@ if __name__ == '__main__':
                 # 有KG信息时结合回答
                 if cluster_chain_of_entities:
                     results = generate_answer(question, cluster_chain_of_entities, args)
-                    save_2_jsonl(question, results, cluster_chain_of_entities, output_file=args.output_file, stats=args._llm_stats, start_time=start_time)
+                    save_2_jsonl(question, results, cluster_chain_of_entities, output_file=args.output_file, stats=args._llm_stats, start_time=start_time, question_string=question_string)
                 else:
                     results = generate_without_explored_paths(question, args)
-                    save_2_jsonl(question, results, [], output_file=args.output_file, stats=args._llm_stats, start_time=start_time)
+                    save_2_jsonl(question, results, [], output_file=args.output_file, stats=args._llm_stats, start_time=start_time, question_string=question_string)
 
         # # 异常处理
         # except Exception:
@@ -293,5 +298,5 @@ if __name__ == '__main__':
                     "raw_llm_output": error.raw_output,
                 }
 
-            save_error_result(args.output_file, question, reasoning_chains, stats=args._llm_stats, start_time=start_time)
+            save_error_result(args.output_file, question, reasoning_chains, stats=args._llm_stats, start_time=start_time, question_string=question_string)
             continue

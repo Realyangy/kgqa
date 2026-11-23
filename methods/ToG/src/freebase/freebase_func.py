@@ -260,7 +260,7 @@ def update_history(entity_candidates, entity, scores, entity_candidates_id, tota
 def half_stop(question, cluster_chain_of_entities, output_file, depth, args, start_time=None):
     logger.info("No new knowledge added during search depth %d, stop searching.", depth)
     answer = generate_answer(question, cluster_chain_of_entities, args)
-    save_2_jsonl(question, answer, cluster_chain_of_entities, output_file=output_file, stats=args._llm_stats, start_time=start_time)
+    save_2_jsonl(question, answer, cluster_chain_of_entities, output_file=output_file, stats=args._llm_stats, start_time=start_time, question_string=args.question_string)
 
 
 # 使用已经检索到的知识生成最终答案，并保存

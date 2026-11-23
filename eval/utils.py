@@ -5,6 +5,8 @@ def read_output(file_path, question_string):
     with open(file_path, 'r', encoding='utf-8') as file:
         for i, line in enumerate(file):
             data = json.loads(line)
+            if question_string == "RawQuestion" and "RawQuestion" not in data and "question" in data:
+                data["RawQuestion"] = data["question"]
             answered_dict[data[question_string]] = data
 
     answered_list = list(answered_dict.values())

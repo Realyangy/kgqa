@@ -16,7 +16,7 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-
     # 每次调用run_llm计为一次算法层面的LLM调用，内部重试不重复计数
     if stats is not None:
         stats["call_num"] += 1
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
     messages = [
         {
             "role": "system",
@@ -36,16 +36,9 @@ def run_llm(prompt, temperature, max_tokens, base_url, api_key, engine="gpt-3.5-
     
     for _ in range(3):
         try:
-            response = client.chat.completions.create(
-                model=engine,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                frequency_penalty=0,
-                presence_penalty=0,
-                response_format={"type": "json_object"},
-                extra_body=extra_body
-            )
+            response = client.chat.completions.create(model=engine, messages=messages, temperature=temperature, max_tokens=max_tokens, frequency_penalty=0, presence_penalty=0, response_format={"type": "json_object"}, extra_body=extra_body)
+            if response.usage is None:
+                logger.warning("LLM response has no token usage; token counts are unknown for this attempt.")
             # 累计已经返回的Token，包括后续被判定为截断的输出
             if stats is not None and response.usage is not None:
                 stats["input_token"] += response.usage.prompt_tokens or 0
@@ -214,9 +207,9 @@ def get_computational_cost(stats, start_time):
 
 
 # 保存样本结果，保存的内容包括问题、LLM的回答、检索到的三元组及计算开销
-def save_2_jsonl(question, answer, cluster_chain_of_entities, output_file, stats=None, start_time=None):
+def save_2_jsonl(question, answer, cluster_chain_of_entities, output_file, stats=None, start_time=None, question_string="question"):
     logger.info("Answer: %s\n", answer)
-    result = {"question": question, "results": answer, "reasoning_chains": cluster_chain_of_entities}
+    result = {question_string: question, "results": answer, "reasoning_chains": cluster_chain_of_entities}
     result.update(get_computational_cost(stats, start_time))
 
     os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
@@ -316,8 +309,8 @@ def prepare_dataset(dataset_name):
 #         f.write(json.dumps(error_result, ensure_ascii=False) + "\n")
 
 
-def save_error_result(output_file, question, reasoning_chains=None, stats=None, start_time=None):
-    error_result = {"question": question, "results": "error", "reasoning_chains": reasoning_chains}
+def save_error_result(output_file, question, reasoning_chains=None, stats=None, start_time=None, question_string="question"):
+    error_result = {question_string: question, "results": "error", "reasoning_chains": reasoning_chains}
     error_result.update(get_computational_cost(stats, start_time))
 
     os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
@@ -327,7 +320,7 @@ def save_error_result(output_file, question, reasoning_chains=None, stats=None, 
 
 
 # 加载已经存在的实验结果文件，读取每个样本的最新实验结果
-def load_previous_results(output_file):
+def load_previous_results(output_file, question_string="question"):
     previous_results = {}
 
     if not os.path.exists(output_file):
@@ -346,7 +339,7 @@ def load_previous_results(output_file):
                 continue
 
             # 这里，新处理结果会覆盖旧结果
-            question = result.get("question")
+            question = result.get(question_string) or result.get("question")
             if question:
                 previous_results[question] = result
 

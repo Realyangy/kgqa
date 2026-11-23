@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class LLM_Client:
     def __init__(self, model_path, base_url, api_key, temperature=0.5, max_new_tokens=256):
         self.model_name = model_path
-        self.client = OpenAI(base_url=base_url, api_key=api_key)
+        self.client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0)
         self.temperature = temperature
         self.max_new_tokens = max_new_tokens
         self.prompt_history = None
@@ -52,13 +52,9 @@ class LLM_Client:
             self.usage_stats["num_calls"] += 1
             for attempt in range(3):
                 try:
-                    response = self.client.chat.completions.create(
-                        model=self.model_name, messages=messages,
-                        temperature=self.temperature if temperature is None else temperature,
-                        max_tokens=max_tokens or self.max_new_tokens,
-                        frequency_penalty=0, presence_penalty=0,
-                        response_format={"type": "json_object"}, extra_body=extra_body,
-                    )
+                    response = self.client.chat.completions.create(model=self.model_name, messages=messages, temperature=self.temperature if temperature is None else temperature, max_tokens=max_tokens or self.max_new_tokens, frequency_penalty=0, presence_penalty=0, response_format={"type": "json_object"}, extra_body=extra_body)
+                    if response.usage is None:
+                        logger.warning("LLM response has no token usage; token counts are unknown for this attempt.")
                     if response.usage:
                         self.usage_stats["prompt_tokens"] += response.usage.prompt_tokens or 0
                         self.usage_stats["completion_tokens"] += response.usage.completion_tokens or 0

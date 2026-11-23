@@ -13,6 +13,10 @@ from freebase_func import *
 from logging_utils import initialize_logger, log_file_only, logger, log_subquestions, begin_detail, record_step
 
 
+def sample_count(value):
+    return None if value.lower() == "none" else int(value)
+
+
 MODELS_DICT = {
     "Qwen3.5-27b-AWQ-4bit": {
         "model_path": "/home/flyvideo/Sata2/Models/LLM/Qwen3.5-27B-AWQ-4bit",
@@ -75,9 +79,9 @@ if __name__ == '__main__':
     parser.add_argument("--temperature_reasoning", type=float, default=0.3, help="the temperature in reasoning stage.")
     parser.add_argument("--embedding_model", type=str, default="/home/flyvideo/Sata2/Models/Embedding-Model/msmarco-distilbert-base-tas-b")
     parser.add_argument("--save_detail", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--output_dir", type=str, default="/home/flyvideo/Sata2/lyy/kgqa/methods/PoG/output", help="Root directory for logs, results, and memory files, relative to methods/PoG/src.")
+    parser.add_argument("--output_dir", type=str, default="../output", help="Root directory for logs, results, and memory files, relative to methods/PoG/src.")
     parser.add_argument("--dataset", type=str, default="cwq", help="choose the dataset.")
-    parser.add_argument("--dataset_sample_num",type=int, default=500, help="Number of dataset samples to evaluate. Use None for all samples.")
+    parser.add_argument("--dataset_sample_num",type=sample_count, default=500, help="Number of dataset samples to evaluate. Use None for all samples.")
     parser.add_argument("--dataset_sample_seed", type=int, default=42, help="Random seed used only for selecting the evaluation subset.")
     parser.add_argument("--depth", type=int, default=4, help="choose the search depth of PoG.")
     parser.add_argument("--remove_unnecessary_rel", type=bool, default=True, help="whether removing unnecessary relations.")
@@ -137,9 +141,10 @@ if __name__ == '__main__':
             logger.info("Retry failed question: %s", question)
 
         begin_detail(data, question, args.output_file, enabled=args.save_detail)
+        reset_llm_stats()
+        start_time = time.time()
         try:
             # 记录当前样本的时间开销、LLM调用次数和token开销
-            start_time = time.time()
             call_num = 0
             all_tokens = {'total': 0, 'input': 0, 'output': 0}
 
@@ -416,5 +421,5 @@ if __name__ == '__main__':
         # 运行过程中捕获异常
         except Exception:
             logger.exception("\n[Error]\nFailed to process question, save error result and continue: %s", question)
-            save_error_result(question, question_string, args.output_file)
+            save_error_result(question, question_string, args.output_file, start_time)
             continue

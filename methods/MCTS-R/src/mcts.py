@@ -1,11 +1,44 @@
+"""Relation-centric MCTS: search never materializes endpoint entities."""
 import logging
-from mcts_core import MCTSNode, KgSearchUtils, expand_node, evaluate_and_add_children, backpropagate
-from mcts_utils import format_relation_path
+import math
+
+from kg_utils import KgSearchUtils, get_entity_name, is_freebase_entity_id
 from evidence import get_final_answer_nodes, make_path_record, try_early_stop
-from sparql_utils import get_entity_name, is_freebase_entity_id
+from prompt_list import evaluate_system_prompt, evaluate_user_prompt
 from subgoal import SubgoalDecomposer, SubgoalState
+from utils import format_relation_path, parse_batch_evaluation_output
 
 logger = logging.getLogger(__name__)
+
+
+class MCTSNode:
+    """一个节点 = 起点实体 + 有向关系链；虚拟根仅负责多起点预算分配。"""
+    def __init__(self, topic_entity=None, parent=None, relation_path=None, is_virtual_root=False):
+        self.topic_entity = dict(topic_entity or {})
+        self.relation_path = [dict(hop) for hop in (relation_path or [])]
+        self.parent = parent
+        self.children = []
+        self.is_virtual_root = is_virtual_root
+        self.is_fully_expanded = is_virtual_root or not self.topic_entity
+        self.path_value = 0.0
+        self.total_reward = 0.0
+        self.value_weight = 0.0
+        self.uct_visits = 0
+
+    def add_child(self, relation):
+        child = MCTSNode(topic_entity=self.topic_entity, parent=self, relation_path=self.relation_path + [relation])
+        self.children.append(child)
+        return child
+
+    def get_uct_value(self, c_uct):
+        if self.is_virtual_root or self.parent is None:
+            return 0.0
+        if self.uct_visits <= 0 or self.value_weight <= 0:
+            return float("inf")
+        return self.total_reward / self.value_weight + c_uct * math.sqrt(math.log(max(2, self.parent.uct_visits)) / self.uct_visits)
+
+    def is_terminal(self, max_depth):
+        return not self.is_virtual_root and len(self.relation_path) >= max_depth
 
 
 class MCTSPathFinder:
@@ -118,3 +151,63 @@ class MCTSPathFinder:
         if not candidates:
             return None
         return max(candidates, key=lambda child: child.get_uct_value(self.c_uct))
+
+
+def expand_node(search, node):
+    """只扩展关系，不查询或剪枝实体，也不特殊处理 CVT。"""
+    if node.is_virtual_root or node.is_fully_expanded or node.is_terminal(search.max_depth):
+        return []
+    candidates = search.kg_retrieval.relations_search(node.topic_entity["entity_id"], node.relation_path)
+    selected = search.kg_retrieval.relations_prune(node.topic_entity, node.relation_path, candidates, search._get_subgoal_context())
+    node.is_fully_expanded = True
+    logger.info("Relation expansion: %d candidates -> %d selected", len(candidates), len(selected))
+    return [
+        {"parent": node, "topic_entity": node.topic_entity,
+         "relation": hop, "relation_path": node.relation_path + [hop]}
+        for hop in selected
+    ]
+
+
+def evaluate_paths(question, reasoner_model, path_requests):
+    """一次 LLM 调用批量评价候选关系路径，仅针对原问题。"""
+    if not path_requests:
+        return []
+    lines = [
+        f"[{i}] {format_relation_path(item['topic_entity'], item['relation_path'])}"
+        for i, item in enumerate(path_requests)
+    ]
+    output = reasoner_model(system_prompt=evaluate_system_prompt, user_prompt=evaluate_user_prompt.substitute(question=question, candidate_paths="\n".join(lines)),
+                            max_tokens=max(256, min(2048, 48 * len(lines) + 128)))[0]
+    parsed = parse_batch_evaluation_output(output, range(len(lines)))
+    for i in range(len(lines)):
+        if i not in parsed:
+            logger.warning("Batch relation-path evaluation missed index %d; assigning zero.", i)
+    return [parsed.get(i, 0.0) for i in range(len(lines))]
+
+
+def evaluate_and_add_children(search, expansion_candidates):
+    if not expansion_candidates:
+        return []
+    scores = evaluate_paths(search.question, search.reasoner_model, expansion_candidates)
+    children = []
+    for item, score in zip(expansion_candidates, scores):
+        child = item["parent"].add_child(item["relation"])
+        child.path_value = score
+        logger.info("  Score=%.1f | %s", score, format_relation_path(child.topic_entity, child.relation_path))
+        children.append(child)
+    return children
+
+
+def _backup_path(child, reward):
+    """保留原来的逐子节点、单位权重回传。"""
+    current = child
+    while current:
+        current.uct_visits += 1
+        current.value_weight += 1.0
+        current.total_reward += reward
+        current = current.parent
+
+
+def backpropagate(children):
+    for child in children:
+        _backup_path(child, float(child.path_value))

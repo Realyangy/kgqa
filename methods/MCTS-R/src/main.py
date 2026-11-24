@@ -9,23 +9,13 @@ import argparse
 import traceback
 from tqdm import tqdm
 from pathlib import Path
-from embedding_model import BiEncoderPairScorer
-
-from model import LLM_Client
+from model import LLM_Client, BiEncoderPairScorer
 from mcts import MCTSPathFinder
 from evidence import ground_relation_paths
 from evidence import collect_candidate_records
-from sparql_utils import SPARQLPATH, set_sparql_trace
+from kg_utils import SPARQLPATH, set_sparql_trace
 from evidence import generate_direct_cot_answer, generate_final_answer
-from utils import (
-    disable_net_proxy,
-    prepare_dataset,
-    topic_entity_names,
-)
-from logging_utils import (
-    UsageTracker,
-    setup_logging,
-)
+from utils import disable_net_proxy, prepare_dataset, topic_entity_names, UsageTracker, setup_logging
 
 
 MODELS_DICT = {
@@ -188,7 +178,7 @@ def run_relation_mcts(args, question, top_ent, model, rerank_model, step_history
     # 如果结构早停选中的路径未返回任何有效绑定，尝试树中其他高分路径。
     if not any(group["instances"] for group in grounded) and finder.termination_reason == "relation_early_stop":
         from evidence import get_final_answer_nodes, make_path_record
-        from mcts_utils import node_path_key
+        from utils import node_path_key
         tried = {node_path_key(node) for node in finder.final_answer_nodes}
         alternatives = [
             node for node in get_final_answer_nodes(finder.root, 0.0, args.path_topk + len(tried))

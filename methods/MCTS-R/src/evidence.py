@@ -1,11 +1,8 @@
 """Structural stopping, final relation-path selection and delayed KG grounding."""
 import logging
 import re
-from mcts_utils import (
-    FREEBASE_NS, build_grounding_query, format_relation_path, node_path_key,
-)
-from sparql_utils import execute_sparql, get_entity_names
-from utils import extract_json, format_reasoning_path, is_valid_answer
+from kg_utils import FREEBASE_NS, build_grounding_query, execute_sparql, get_entity_names
+from utils import extract_json, format_reasoning_path, is_valid_answer, format_relation_path, node_path_key
 from prompt_list import (
     verify_answer_system_prompt, verify_answer_user_prompt,
     final_answer_from_paths_system_prompt, final_answer_from_paths_user_prompt,

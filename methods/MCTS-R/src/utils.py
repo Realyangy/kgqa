@@ -2,6 +2,8 @@ import os
 import re
 import json
 from pathlib import Path
+import logging
+from datetime import datetime
 
 
 
@@ -161,3 +163,105 @@ def is_valid_answer(answer: str) -> bool:
     if "[cvt:" in answer_lower:
         return False
     return True
+
+
+def format_relation_path(topic_entity, relation_path):
+    text = str(topic_entity.get("entity_name") or topic_entity["entity_id"])
+    for index, hop in enumerate(relation_path, start=1):
+        arrow = " -> " if hop["head"] else " <- "
+        text += arrow + hop["relation"] + arrow + f"?e{index}"
+    return text
+
+
+def node_path_key(node):
+    return (
+        node.topic_entity.get("entity_id", ""),
+        tuple((hop["relation"], hop["head"]) for hop in node.relation_path),
+    )
+
+
+def _normalize_path_score(score):
+    try:
+        score = max(0.0, min(1.0, float(score)))
+    except (TypeError, ValueError):
+        score = 0.0
+    return round(score, 1)
+
+
+def parse_batch_evaluation_output(output, expected_indices):
+    """Parse LLM path-evaluation scores from JSON or a loose text fallback."""
+    expected = set(expected_indices)
+    parsed = extract_json(output)
+    if isinstance(parsed, dict):
+        for key in ("results", "scores", "evaluations", "candidates"):
+            if isinstance(parsed.get(key), list):
+                parsed = parsed[key]
+                break
+
+    results = {}
+    if isinstance(parsed, list):
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            try:
+                index = int(item.get("index"))
+            except (TypeError, ValueError):
+                continue
+            if index not in expected:
+                continue
+            results[index] = _normalize_path_score(item.get("score"))
+
+    if results:
+        return results
+
+    pattern = re.compile(
+        r"(?is)(?:candidate|path|index)\s*\[?#?\s*(\d+)\s*\]?\s*[:\n].*?"
+        r"score\s*:\s*((?:0(?:\.\d+)?|1(?:\.0+)?))\b"
+        r"(?=(?:candidate|path|index)\s*\[?#?\s*\d+\s*\]?\s*[:\n]|\Z)"
+    )
+    for match in pattern.finditer(output or ""):
+        index = int(match.group(1))
+        if index not in expected:
+            continue
+        results[index] = _normalize_path_score(match.group(2))
+    return results
+
+
+logger = logging.getLogger(__name__)
+
+
+USAGE_KEYS = ("num_calls", "prompt_tokens", "completion_tokens", "total_tokens")
+
+
+def setup_logging(args):
+    os.makedirs(args.run_dir, exist_ok=True)
+    log_path = os.path.join(args.run_dir, args.run_name + ".log")
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+        handler.close()
+    file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.INFO)
+    stream_handler.setFormatter(logging.Formatter("%(message)s"))
+    root.addHandler(file_handler)
+    root.addHandler(stream_handler)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logger.info("Run started at %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    safe_args = {key: value for key, value in vars(args).items() if key != "api_key"}
+    logger.info("Effective args: %s", json.dumps(safe_args, ensure_ascii=False, sort_keys=True))
+    return log_path
+
+
+class UsageTracker:
+    def __init__(self, model):
+        self.model = model
+        self.before = model.get_usage_snapshot()
+
+    def delta(self):
+        after = self.model.get_usage_snapshot()
+        return {key: max(0, int(after.get(key, 0) or 0) - int(self.before.get(key, 0) or 0)) for key in USAGE_KEYS}

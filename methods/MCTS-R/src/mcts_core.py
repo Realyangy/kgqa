@@ -36,11 +36,7 @@ class MCTSNode:
         self.uct_visits = 0
 
     def add_child(self, relation):
-        child = MCTSNode(
-            topic_entity=self.topic_entity,
-            parent=self,
-            relation_path=self.relation_path + [relation],
-        )
+        child = MCTSNode(topic_entity=self.topic_entity, parent=self, relation_path=self.relation_path + [relation])
         self.children.append(child)
         return child
 
@@ -49,9 +45,7 @@ class MCTSNode:
             return 0.0
         if self.uct_visits <= 0 or self.value_weight <= 0:
             return float("inf")
-        return self.total_reward / self.value_weight + c_uct * math.sqrt(
-            math.log(max(2, self.parent.uct_visits)) / self.uct_visits
-        )
+        return self.total_reward / self.value_weight + c_uct * math.sqrt(math.log(max(2, self.parent.uct_visits)) / self.uct_visits)
 
     def is_terminal(self, max_depth):
         return not self.is_virtual_root and len(self.relation_path) >= max_depth
@@ -103,9 +97,7 @@ class KgSearchUtils:
             scores = self.rerank_model.predict([(query, doc) for doc in docs])
             if len(scores) != len(candidates):
                 raise ValueError("Incomplete reranker scores")
-            return [item for item, _ in sorted(
-                zip(candidates, scores), key=lambda pair: float(pair[1]), reverse=True
-            )[:topk]]
+            return [item for item, _ in sorted(zip(candidates, scores), key=lambda pair: float(pair[1]), reverse=True)[:topk]]
         except Exception:
             logger.exception("Relation rerank failed; using candidate order.")
             return candidates[:topk]
@@ -122,17 +114,10 @@ class KgSearchUtils:
             f"[{i}] {item['relation']} ({'outgoing' if item['head'] else 'incoming'})"
             for i, item in enumerate(pool)
         ]
-        prompt = extract_relation_user_prompt.substitute(
-            question=self.question,
-            topic_entity=topic_entity.get("entity_name") or topic_entity["entity_id"],
-            relation_path=format_relation_path(topic_entity, relation_path),
-            subgoal_context=context,
-            relations="\n".join(lines),
-            topk=self.relation_topk,
-        )
-        output = self.model(
-            system_prompt=extract_relation_system_prompt, user_prompt=prompt, temperature=0.0
-        )[0]
+        prompt = extract_relation_user_prompt.substitute(question=self.question, topic_entity=topic_entity.get("entity_name") or topic_entity["entity_id"],
+                                                         relation_path=format_relation_path(topic_entity, relation_path), subgoal_context=context,
+                                                         relations="\n".join(lines), topk=self.relation_topk)
+        output = self.model(system_prompt=extract_relation_system_prompt, user_prompt=prompt, temperature=0.0)[0]
         selected = extract_candidate_indices(output, set(range(len(pool))))
         if not selected:
             logger.warning("Invalid relation selection; falling back to reranker.")
@@ -144,12 +129,8 @@ def expand_node(search, node):
     """只扩展关系，不查询或剪枝实体，也不特殊处理 CVT。"""
     if node.is_virtual_root or node.is_fully_expanded or node.is_terminal(search.max_depth):
         return []
-    candidates = search.kg_retrieval.relations_search(
-        node.topic_entity["entity_id"], node.relation_path
-    )
-    selected = search.kg_retrieval.relations_prune(
-        node.topic_entity, node.relation_path, candidates, search._get_subgoal_context()
-    )
+    candidates = search.kg_retrieval.relations_search(node.topic_entity["entity_id"], node.relation_path)
+    selected = search.kg_retrieval.relations_prune(node.topic_entity, node.relation_path, candidates, search._get_subgoal_context())
     node.is_fully_expanded = True
     logger.info("Relation expansion: %d candidates -> %d selected", len(candidates), len(selected))
     return [
@@ -167,11 +148,8 @@ def evaluate_paths(question, reasoner_model, path_requests):
         f"[{i}] {format_relation_path(item['topic_entity'], item['relation_path'])}"
         for i, item in enumerate(path_requests)
     ]
-    output = reasoner_model(
-        system_prompt=evaluate_system_prompt,
-        user_prompt=evaluate_user_prompt.substitute(question=question, candidate_paths="\n".join(lines)),
-        max_tokens=max(256, min(2048, 48 * len(lines) + 128)),
-    )[0]
+    output = reasoner_model(system_prompt=evaluate_system_prompt, user_prompt=evaluate_user_prompt.substitute(question=question, candidate_paths="\n".join(lines)),
+                            max_tokens=max(256, min(2048, 48 * len(lines) + 128)))[0]
     parsed = parse_batch_evaluation_output(output, range(len(lines)))
     for i in range(len(lines)):
         if i not in parsed:

@@ -20,11 +20,7 @@ def extract_answer(text):
     if not text:
         return ""
 
-    match = re.search(
-        r"<final_answer>\s*(.*?)\s*</final_answer>",
-        text,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
+    match = re.search(r"<final_answer>\s*(.*?)\s*</final_answer>", text, flags=re.IGNORECASE | re.DOTALL)
     if match:
         return match.group(1).strip()
 
@@ -120,11 +116,7 @@ def try_early_stop(*, root, question, reasoner_model, good_threshold,
             + format_relation_path(node.topic_entity, node.relation_path)
             for i, node in enumerate(nodes, start=1)
         )
-        raw = reasoner_model(
-            system_prompt=verify_answer_system_prompt,
-            user_prompt=verify_answer_user_prompt.substitute(question=question, paths=paths),
-            max_tokens=256,
-        )[0]
+        raw = reasoner_model(system_prompt=verify_answer_system_prompt, user_prompt=verify_answer_user_prompt.substitute(question=question, paths=paths), max_tokens=256)[0]
         verdict = parse_early_stop_verdict(raw, len(nodes))
         if verdict is None:
             return {"status": "invalid", "nodes": []}
@@ -217,22 +209,15 @@ def build_path_evidence_text(grounded):
 def generate_direct_cot_answer(question, reasoner_model):
     """Answer directly with the shared answer-first CoT protocol."""
     user_prompt = missing_topic_cot_user_prompt.substitute(question=question)
-    raw_answer = reasoner_model(
-        system_prompt=missing_topic_cot_system_prompt,
-        user_prompt=user_prompt,
-        max_tokens=256,
-    )[0]
+    raw_answer = reasoner_model(system_prompt=missing_topic_cot_system_prompt, user_prompt=user_prompt, max_tokens=256)[0]
     return extract_answer(raw_answer) or "none", raw_answer
 
 
 def generate_final_answer(question, grounded, reasoner_model):
     evidence = build_path_evidence_text(grounded)
     if evidence:
-        raw = reasoner_model(
-            system_prompt=final_answer_from_paths_system_prompt,
-            user_prompt=final_answer_from_paths_user_prompt.substitute(question=question, evidence_paths=evidence),
-            max_tokens=512,
-        )[0]
+        raw = reasoner_model(system_prompt=final_answer_from_paths_system_prompt,
+                             user_prompt=final_answer_from_paths_user_prompt.substitute(question=question, evidence_paths=evidence), max_tokens=512)[0]
         return extract_answer(raw) or "none", "grounded_paths"
     answer, _ = generate_direct_cot_answer(question, reasoner_model)
     return answer, "direct_cot_no_grounding"

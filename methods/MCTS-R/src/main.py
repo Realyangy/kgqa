@@ -167,24 +167,11 @@ def run_relation_mcts(args, question, top_ent, model, rerank_model, step_history
         return record
 
     # 初始化MCTS检索器
-    finder = MCTSPathFinder(
-        search_model=model,
-        planner_model=model,
-        reasoner_model=model,
-        rerank_model=rerank_model,
-        question=question,
-        topic_entities=top_ent,
-        max_iterations=args.iterations,
-        max_depth=args.depth,
-        c_uct=args.c_uct,
-        relation_topk=args.relation_topk,
-        path_topk=args.path_topk,
-        answer_threshold=args.answer_threshold,
-        good_threshold=args.good_threshold,
-        enable_decom=args.enable_decom,
-        enable_early_stop=args.enable_early_stop,
-        step_history=step_history,
-    )
+    finder = MCTSPathFinder(search_model=model, planner_model=model, reasoner_model=model, rerank_model=rerank_model,
+                            question=question, topic_entities=top_ent, max_iterations=args.iterations, max_depth=args.depth,
+                            c_uct=args.c_uct, relation_topk=args.relation_topk, path_topk=args.path_topk,
+                            answer_threshold=args.answer_threshold, good_threshold=args.good_threshold,
+                            enable_decom=args.enable_decom, enable_early_stop=args.enable_early_stop, step_history=step_history)
 
     # 子目标分解
     subgoals = finder.global_subgoal_state.subgoals if finder.global_subgoal_state else []
@@ -197,9 +184,7 @@ def run_relation_mcts(args, question, top_ent, model, rerank_model, step_history
 
     # MCTS 只搜索关系链，结束后才进行实体落地。
     best_paths = finder.search()
-    grounded = ground_relation_paths(
-        best_paths, step_history=step_history, rows_per_path=args.grounding_rows_per_path
-    )
+    grounded = ground_relation_paths(best_paths, step_history=step_history, rows_per_path=args.grounding_rows_per_path)
     # 如果结构早停选中的路径未返回任何有效绑定，尝试树中其他高分路径。
     if not any(group["instances"] for group in grounded) and finder.termination_reason == "relation_early_stop":
         from evidence import get_final_answer_nodes, make_path_record
@@ -211,9 +196,7 @@ def run_relation_mcts(args, question, top_ent, model, rerank_model, step_history
         ][:args.path_topk]
         if alternatives:
             extra_paths = [make_path_record(node) for node in alternatives]
-            extra_grounded = ground_relation_paths(
-                extra_paths, step_history=step_history, rows_per_path=args.grounding_rows_per_path
-            )
+            extra_grounded = ground_relation_paths(extra_paths, step_history=step_history, rows_per_path=args.grounding_rows_per_path)
             best_paths.extend(extra_paths)
             grounded.extend(extra_grounded)
             finder.final_answer_nodes.extend(alternatives)

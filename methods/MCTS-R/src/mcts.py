@@ -37,15 +37,11 @@ class MCTSPathFinder:
         else:
             topics = [(eid, name or eid) for eid, name in topic_entities.items() if is_freebase_entity_id(eid)]
         for eid, name in dict(topics).items():
-            self.root.children.append(MCTSNode(
-                topic_entity={"entity_id": eid, "entity_name": name}, parent=self.root
-            ))
+            self.root.children.append(MCTSNode(topic_entity={"entity_id": eid, "entity_name": name}, parent=self.root))
         self.kg_retrieval = KgSearchUtils(question, rerank_model, search_model, relation_topk)
         # 问题分解逻辑、输入及 Prompt 保持不变。
         if enable_decom:
-            subgoals, self.is_complex = SubgoalDecomposer(self.planner_model).decompose(
-                question=question, topic_entities=topic_entities
-            )
+            subgoals, self.is_complex = SubgoalDecomposer(self.planner_model).decompose(question=question, topic_entities=topic_entities)
             self.global_subgoal_state = SubgoalState(subgoals)
         else:
             self.is_complex = False
@@ -61,11 +57,9 @@ class MCTSPathFinder:
     def _attempt_early_stop(self):
         if not self.enable_early_stop:
             return None
-        result = try_early_stop(
-            root=self.root, question=self.question, reasoner_model=self.reasoner_model,
-            good_threshold=self.good_threshold, answer_threshold=self.answer_threshold,
-            path_topk=self.path_topk, verification_cache=self.early_stop_verification_cache,
-        )
+        result = try_early_stop(root=self.root, question=self.question, reasoner_model=self.reasoner_model,
+                                good_threshold=self.good_threshold, answer_threshold=self.answer_threshold,
+                                path_topk=self.path_topk, verification_cache=self.early_stop_verification_cache)
         self._record("early_stop", status=result["status"],
                      selected_paths=[make_path_record(node) for node in result.get("nodes", [])])
         if result["status"] == "accepted":

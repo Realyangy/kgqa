@@ -9,7 +9,7 @@ import argparse
 import traceback
 from tqdm import tqdm
 from pathlib import Path
-from model import LLM_Client, BiEncoderPairScorer
+from model import LLM_Client
 from mcts import MCTSPathFinder
 from evidence import ground_relation_paths
 from evidence import collect_candidate_records
@@ -49,10 +49,6 @@ def optional_int(value):
 # 规范化命令行参数
 def _finalize_args(args):
 
-    # 配置环境变量
-    if args.gpu_id is not None:
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
-
     # 配置模型参数
     settings = MODELS_DICT[args.model_name]
     args.model_path, args.base_url, args.api_key = settings["model_path"], settings["base_url"], settings["api_key"]
@@ -76,14 +72,10 @@ def _finalize_args(args):
 def parse_args():
     parser = argparse.ArgumentParser(description="MCTS-R: relation-centric Monte Carlo Tree Search for KGQA")
 
-    # 硬件环境相关配置
-    parser.add_argument("--gpu_id", type=int, default=0, help="Physical GPU index for the local embedding model, e.g. 0 or 1.")
-
     # 模型相关配置
     parser.add_argument("--model_name", choices=MODELS_DICT, default="Qwen3.5-27b-AWQ-4bit")
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature for all LLM clients.")
     parser.add_argument("--max_length", type=int, default=512, help="Default output token limit for model tasks without a task-specific limit.")
-    parser.add_argument("--embedding_model_path", type=str, default="/home/liyuyang/lyy/Models/embedding_model/msmarco-distilbert-base-tas-b", help="Path to the SentenceTransformer bi-encoder used for candidate reranking.")
 
     # 数据集相关配置
     parser.add_argument("--dataset", type=str.lower, choices=["cwq", "webqsp", "grailqa"], default="cwq")
@@ -125,7 +117,7 @@ def parse_args():
 logger = logging.getLogger(__name__)
 
 
-def run_relation_mcts(args, question, top_ent, model, rerank_model, step_history=None):
+def run_relation_mcts(args, question, top_ent, model, step_history=None):
     logger.info("Current Question: %s", question)
     logger.info("Topic Entity(s): %s", top_ent or {})
 
@@ -157,7 +149,7 @@ def run_relation_mcts(args, question, top_ent, model, rerank_model, step_history
         return record
 
     # 初始化MCTS检索器
-    finder = MCTSPathFinder(search_model=model, planner_model=model, reasoner_model=model, rerank_model=rerank_model,
+    finder = MCTSPathFinder(search_model=model, planner_model=model, reasoner_model=model,
                             question=question, topic_entities=top_ent, max_iterations=args.iterations, max_depth=args.depth,
                             c_uct=args.c_uct, relation_topk=args.relation_topk, path_topk=args.path_topk,
                             answer_threshold=args.answer_threshold, good_threshold=args.good_threshold,
@@ -282,7 +274,6 @@ def run(args):
 
     # 配置模型
     model = LLM_Client(args.model_path, args.base_url, args.api_key, temperature=args.temperature, max_new_tokens=args.max_length)
-    rerank_model = BiEncoderPairScorer(args.embedding_model_path)
 
     # 循环处理各样本
     for index, item in enumerate(tqdm(data, desc="Processing")):
@@ -304,7 +295,7 @@ def run(args):
             set_sparql_trace(sparql_history)
         try:
             topics = item.get("topic_entity") or {}
-            algorithm_record = run_relation_mcts(args, question, topics, model, rerank_model, step_history)
+            algorithm_record = run_relation_mcts(args, question, topics, model, step_history)
             record = {
                 question_key: question,
                 "results": algorithm_record["answer"],

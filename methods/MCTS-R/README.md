@@ -4,7 +4,7 @@ Relation-centric Monte Carlo Tree Search for Knowledge Graph Question Answering.
 
 当前为关系中心搜索的第一阶段实现，继承 new-method 的初始问题分解、多起点虚拟根、UCT 和逐子节点价值回传。
 
-- 搜索状态：固定起点实体 + 有序、有方向的关系链。每次迭代联合查询当前关系链可达的下一跳出入边，LLM 关系剪枝，批量评价子路径并回传。
+- 搜索状态：固定起点实体 + 有序、有方向的关系链。每次迭代联合查询当前关系链可达的下一跳出入边（有向关系合计 LIMIT 1000），LLM 关系剪枝，批量评价子路径并回传。候选数不超过 relation_topk 时直接保留；LLM 未选出有效关系时本轮不扩展子节点，无嵌入粗排、重排或随机补选。
 - 搜索阶段不检索具体中间/末端实体，不进行实体剪枝或 CVT 特殊处理；CVT 的每条实际关系各占一跳。
 - 早停只判断关系结构是否足够；不生成答案。可使用 --no-enable_early_stop 固定预算搜索。
 - 搜索结束后查询完整变量绑定（每条链 LIMIT 1000），默认每条路径最多向最终回答模型提供 30 条绑定，优先覆盖不同末端。保留字面量和未命名实体 ID。
@@ -18,4 +18,4 @@ Relation-centric Monte Carlo Tree Search for Knowledge Graph Question Answering.
 python main.py --dataset cwq --dataset_sample_num 50 --dataset_sample_seed 42 --no-enable_early_stop
 ```
 
-运行前确认模型 API、Freebase endpoint 和本地 embedding_model_path；数据集从仓库根目录的 data/test 读取。旧 new-method 实验结果不自动迁移。
+运行前确认模型 API 和 Freebase endpoint；数据集从仓库根目录的 data/test 读取。旧 new-method 实验结果不自动迁移。

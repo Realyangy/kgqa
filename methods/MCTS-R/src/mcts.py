@@ -42,8 +42,8 @@ class MCTSNode:
 
 
 class MCTSPathFinder:
-    def __init__(self, search_model, planner_model, reasoner_model, rerank_model,
-                 question, topic_entities, max_iterations=5, max_depth=5,
+    def __init__(self, search_model, planner_model, reasoner_model, question, topic_entities,
+                 max_iterations=5, max_depth=5,
                  c_uct=0.15, relation_topk=5, answer_threshold=0.9,
                  good_threshold=0.7, path_topk=10, enable_decom=True,
                  enable_early_stop=True, step_history=None):
@@ -71,7 +71,7 @@ class MCTSPathFinder:
             topics = [(eid, name or eid) for eid, name in topic_entities.items() if is_freebase_entity_id(eid)]
         for eid, name in dict(topics).items():
             self.root.children.append(MCTSNode(topic_entity={"entity_id": eid, "entity_name": name}, parent=self.root))
-        self.kg_retrieval = KgSearchUtils(question, rerank_model, search_model, relation_topk)
+        self.kg_retrieval = KgSearchUtils(question, search_model, relation_topk)
         # 问题分解逻辑、输入及 Prompt 保持不变。
         if enable_decom:
             subgoals, self.is_complex = SubgoalDecomposer(self.planner_model).decompose(question=question, topic_entities=topic_entities)

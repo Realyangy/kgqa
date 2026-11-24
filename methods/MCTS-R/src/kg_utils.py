@@ -4,7 +4,7 @@ import re
 from functools import lru_cache
 
 from prompt_list import extract_relation_system_prompt, extract_relation_user_prompt
-from utils import extract_candidate_indices, format_relation_name, format_relation_path
+from utils import extract_candidate_indices, format_relation_path
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +35,16 @@ def build_relation_extract(topic_entity_id, relation_path):
     return "\n".join(triples), last
 
 
-def build_relation_query(topic_entity_id, relation_path, head=True, limit=1000):
+def build_relation_query(topic_entity_id, relation_path, limit=1000):
+    """同时查询可达末端的入边和出边，有向关系合计最多返回 1000 个。"""
     extract, last = build_relation_extract(topic_entity_id, relation_path)
-    edge = f"{last} ?relation ?x ." if head else f"?x ?relation {last} ."
     return (
-        PREFIX + "SELECT DISTINCT ?relation WHERE {\n"
-        + extract + "\n" + edge + "\n"
+        PREFIX + "SELECT DISTINCT ?relation ?direction WHERE {\n"
+        + extract + "\n"
+        + f'{{ {last} ?relation ?x . BIND("outgoing" AS ?direction) }}\n'
+        + f'UNION {{ ?x ?relation {last} . BIND("incoming" AS ?direction) }}\n'
         + f'FILTER(STRSTARTS(STR(?relation), "{FREEBASE_NS}"))\n'
-        + "}\nORDER BY ?relation\n" + f"LIMIT {int(limit)}"
+        + "}\nORDER BY ?relation DESC(?direction)\n" + f"LIMIT {min(1000, int(limit))}"
     )
 
 
@@ -234,9 +236,8 @@ SELECT DISTINCT ?entity ?name ?priority WHERE {{
 
 
 class KgSearchUtils:
-    def __init__(self, question, rerank_model, model, relation_topk):
+    def __init__(self, question, model, relation_topk):
         self.question = question
-        self.rerank_model = rerank_model
         self.model = model
         self.relation_topk = relation_topk
 
@@ -248,60 +249,34 @@ class KgSearchUtils:
             blocked_reverse = (last["relation"], not last["head"])
         seen = set()
         candidates = []
-        for head in (True, False):
-            rows = execute_sparql(build_relation_query(topic_entity_id, relation_path, head))
-            for row in rows:
-                uri = row.get("relation", {}).get("value", "")
-                if not uri.startswith(FREEBASE_NS):
-                    continue
-                relation = uri[len(FREEBASE_NS):]
-                key = (relation, head)
-                if key == blocked_reverse or key in seen or is_noise_relation(relation):
-                    continue
-                seen.add(key)
-                candidates.append({"relation": relation, "head": head})
+        rows = execute_sparql(build_relation_query(topic_entity_id, relation_path))
+        for row in rows:
+            uri = row.get("relation", {}).get("value", "")
+            direction = row.get("direction", {}).get("value", "")
+            if not uri.startswith(FREEBASE_NS) or direction not in ("outgoing", "incoming"):
+                continue
+            head = direction == "outgoing"
+            relation = uri[len(FREEBASE_NS):]
+            key = (relation, head)
+            if key == blocked_reverse or key in seen or is_noise_relation(relation):
+                continue
+            seen.add(key)
+            candidates.append({"relation": relation, "head": head})
         return sorted(candidates, key=lambda item: (item["relation"], not item["head"]))
-
-    def _rerank_relations(self, candidates, topic_entity, relation_path, subgoal_context, topk):
-        if not self.rerank_model:
-            return candidates[:topk]
-        query = (
-            f"Question: {self.question}\n"
-            f"Known relation path: {format_relation_path(topic_entity, relation_path)}\n"
-            f"Static subgoals:\n{subgoal_context}"
-        )
-        docs = [
-            f"Candidate relation: {format_relation_name(item['relation'])} "
-            f"({'outgoing' if item['head'] else 'incoming'})"
-            for item in candidates
-        ]
-        try:
-            scores = self.rerank_model.predict([(query, doc) for doc in docs])
-            if len(scores) != len(candidates):
-                raise ValueError("Incomplete reranker scores")
-            return [item for item, _ in sorted(zip(candidates, scores), key=lambda pair: float(pair[1]), reverse=True)[:topk]]
-        except Exception:
-            logger.exception("Relation rerank failed; using candidate order.")
-            return candidates[:topk]
 
     def relations_prune(self, topic_entity, relation_path, candidate_relations, subgoal_context=None):
         if len(candidate_relations) <= self.relation_topk:
             return list(candidate_relations)
         context = subgoal_context or "None"
-        # 两个方向合计限制为 1000，超出时先按原有嵌入模型粗排，避免上下文爆炸。
-        pool = candidate_relations
-        if len(pool) > 1000:
-            pool = self._rerank_relations(pool, topic_entity, relation_path, context, 1000)
         lines = [
             f"[{i}] {item['relation']} ({'outgoing' if item['head'] else 'incoming'})"
-            for i, item in enumerate(pool)
+            for i, item in enumerate(candidate_relations)
         ]
         prompt = extract_relation_user_prompt.substitute(question=self.question, topic_entity=topic_entity.get("entity_name") or topic_entity["entity_id"],
                                                          relation_path=format_relation_path(topic_entity, relation_path), subgoal_context=context,
                                                          relations="\n".join(lines), topk=self.relation_topk)
         output = self.model(system_prompt=extract_relation_system_prompt, user_prompt=prompt, temperature=0.0)[0]
-        selected = extract_candidate_indices(output, set(range(len(pool))))
+        selected = extract_candidate_indices(output, set(range(len(candidate_relations))))
         if not selected:
-            logger.warning("Invalid relation selection; falling back to reranker.")
-            return self._rerank_relations(pool, topic_entity, relation_path, context, self.relation_topk)
-        return [pool[i] for i in selected[:self.relation_topk]]
+            logger.warning("Invalid relation selection; no relations selected for expansion.")
+        return [candidate_relations[i] for i in selected[:self.relation_topk]]

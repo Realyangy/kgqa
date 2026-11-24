@@ -1,13 +1,14 @@
 import os
 import re
 import json
+from pathlib import Path
 
 
 
 def prepare_dataset(dataset_name):
     datasets = {"cwq": ("cwq.json", "question"), "webqsp": ("webqsp.json", "RawQuestion"), "grailqa": ("graliqa.json", "question")}
     filename, question_key = datasets[dataset_name]
-    path = os.path.join("/home/liyuyang/lyy/kgqa/data/test", filename)
+    path = Path(__file__).resolve().parents[3] / "data" / "test" / filename
     with open(path, encoding="utf-8") as stream:
         return json.load(stream), question_key
 

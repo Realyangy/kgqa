@@ -27,7 +27,8 @@ def setup_logging(args):
     root.addHandler(stream_handler)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logger.info("Run started at %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    logger.info("Effective args: %s", json.dumps(vars(args), ensure_ascii=False, sort_keys=True))
+    safe_args = {key: value for key, value in vars(args).items() if key != "api_key"}
+    logger.info("Effective args: %s", json.dumps(safe_args, ensure_ascii=False, sort_keys=True))
     return log_path
 
 

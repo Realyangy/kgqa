@@ -4,7 +4,7 @@ from mcts_core import KgSearchUtils
 from mcts_core import MCTSNode
 from mcts_core import backpropagate
 from mcts_core import expand_node
-from mcts_core import simulate_candidates
+from mcts_core import evaluate_and_add_children
 from evidence import (
     get_final_answer_nodes,
 )
@@ -21,7 +21,7 @@ class MCTSPathFinder:
                  question, topic_entities,
                  max_iterations=5, max_depth=5, c_uct=0.15, relation_topk=5, entity_topk=5, cvt_relation_topk=2,
                  answer_threshold=0.9, good_threshold=0.7, path_topk=10,
-                 enable_decom=True,
+                 enable_decom=True, step_history=None,
     ):
         ## LLM与功能开关
         self.search_model = search_model
@@ -50,6 +50,7 @@ class MCTSPathFinder:
         self.actual_iterations = 0
         self.termination_reason = "not_started"
         self.final_answer_nodes = []
+        self.step_history = step_history if step_history is not None else []
         ## 创建虚拟根
         self.root = MCTSNode(entity_info={}, is_virtual_root=True)
 
@@ -100,13 +101,13 @@ class MCTSPathFinder:
             root=self.root,
             question=self.question,
             reasoner_model=self.reasoner_model,
-            global_subgoal_state=self.global_subgoal_state,
             good_threshold=self.good_threshold,
             answer_threshold=self.answer_threshold,
             path_topk=self.path_topk,
             verification_cache=self.early_stop_verification_cache,
             tree_nodes=tree_nodes,
         )
+        self.step_history.append({"event": "early_stop", "iteration": self.actual_iterations, "status": result["status"]})
         if result["status"] == "accepted":
             self.early_stop_answer = result["answer"]
             self.final_answer_nodes = list(result.get("nodes", []) or [])
@@ -129,10 +130,28 @@ class MCTSPathFinder:
                 self.termination_reason = "no_expandable_node"
                 break
             logger.info("Selected entity: %s", node.entity_info.get("entity_name", ""))
+            self.step_history.append({
+                "event": "selection", "iteration": i + 1,
+                "entity_id": node.entity_id, "entity_name": node.entity_name,
+                "path": list(node.walk_path), "id_path": list(node.id_path),
+            })
             candidates = expand_node(self, node)
-            children = simulate_candidates(self, candidates) if candidates else []
+            self.step_history.append({
+                "event": "expansion", "iteration": i + 1,
+                "candidate_count": len(candidates),
+                "candidate_paths": [item["eval_walk_path"] for item in candidates],
+            })
+            children = evaluate_and_add_children(self, candidates) if candidates else []
             if children:
                 backpropagate(children)
+            self.step_history.append({
+                "event": "evaluation_and_backup", "iteration": i + 1,
+                "children": [
+                    {"entity_id": child.entity_id, "path": list(child.walk_path),
+                     "id_path": list(child.id_path), "score": child.path_value}
+                    for child in children
+                ],
+            })
             paths = self._run_search_control()
             if paths is not None:
                 return paths
@@ -183,11 +202,7 @@ class MCTSPathFinder:
         if not node.children:
             return None
 
-        candidate_children = node.children
-        if node.is_virtual_root:
-            candidate_children = [child for child in node.children if getattr(child, "root_active", True)]
-
-        expandable_children = [child for child in candidate_children if self._has_expandable_node(child)]
+        expandable_children = [child for child in node.children if self._has_expandable_node(child)]
         if not expandable_children:
             return None
 

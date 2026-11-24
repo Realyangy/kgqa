@@ -31,14 +31,15 @@ class LLM_Client:
         messages.append({"role": "user", "content": user_prompt or ""})
         kwargs = {"model": self.model_name, "messages": messages, "temperature": self.temperature if temperature is None else temperature, "max_tokens": self.max_new_tokens if max_tokens is None else max_tokens}
         name = self.model_name.lower()
-        if "qwen3" in name:
+        if "qwen" in name:
             kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
         elif "deepseek" in name:
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         results = []
+        # Match the other baselines: one logical call, with retries charged in tokens.
         for _ in range(self.n if n is None else n):
+            self.usage_stats["num_calls"] += 1
             for attempt in range(3):
-                self.usage_stats["num_calls"] += 1
                 try:
                     response = self.client.chat.completions.create(**kwargs)
                     usage = getattr(response, "usage", None)

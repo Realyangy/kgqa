@@ -838,7 +838,7 @@ def evaluate_paths(question, reasoner_model, path_requests):
     return results
 
 
-def simulate_candidates(search, expansion_candidates):
+def evaluate_and_add_children(search, expansion_candidates):
     if not expansion_candidates:
         return []
 

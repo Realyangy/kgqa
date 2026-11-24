@@ -31,7 +31,7 @@ SELECT DISTINCT ?Entity
 WHERE {
     ns:%s ns:%s ?Entity .
 }
-LIMIT 5000
+LIMIT 1000
 """
 
 SPARQL_SEARCH_HEAD_ENTITIES = """
@@ -40,7 +40,7 @@ SELECT DISTINCT ?Entity
 WHERE {
     ?Entity ns:%s ns:%s .
 }
-LIMIT 5000
+LIMIT 1000
 """
 
 

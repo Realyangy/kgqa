@@ -8,10 +8,6 @@
 
 后续关系级 MCTS、类型引导、证据缺口反馈及实体落地与逻辑执行均未实现。CoR 的关系链查询构造可作为后续实现的参考。
 
-从本目录运行模拟测试：
+实验入口仍为 `src/main.py`。从 `src` 目录启动时，默认输出到本方法的 `output`；运行名称使用 `new-method` 前缀。数据集从仓库根目录的 data/test 读取。真实运行前需确认模型 API、Freebase endpoint 和嵌入模型路径。可用 `python main.py --help` 查看当前参数。旧动态更新、重规划和进度奖励参数已移除。
 
-```bash
-python -m unittest discover -s tests -v
-```
-
-实验入口仍为 `src/main.py`。从 `src` 目录启动时，默认输出到本方法的 `output`；运行名称使用 `new-method` 前缀。真实运行前需配置代码中的模型 API、Freebase endpoint、嵌入模型路径和数据路径。可用 `python main.py --help` 查看当前参数。旧动态更新、重规划和进度奖励参数已移除。
+工程约定：实体查询 LIMIT 1000；LLM Calls 按逻辑调用统计，重试产生的已返回 Token 仍累计；日志与运行名称指纹不包含 API Key。每次实验的 JSONL、LOG、Details 均保存在 output/<run_name>/，Details 记录逐轮选择、扩展、评价、早停及异常信息。当前仍使用原有的编号列表、JSON 数组和回答标签等输出协议；统一 JSON Object 将在新规划和关系级搜索 Prompt 设计时一并完成。

@@ -12,8 +12,6 @@ from utils import (
     is_valid_answer,
 )
 from prompt_list import (
-    direct_answer_system_prompt,
-    direct_answer_user_prompt,
     final_answer_from_paths_system_prompt,
     final_answer_from_paths_user_prompt,
     missing_topic_cot_system_prompt,
@@ -264,7 +262,7 @@ def get_early_stop_nodes(node, good_threshold=0.7, path_topk=10, nodes=None):
 
 # --- evidence ---
 
-def _verification_signature(nodes, subgoal_status):
+def _verification_signature(nodes):
     path_signature = tuple(
         (
             node_path_key(node),
@@ -272,7 +270,7 @@ def _verification_signature(nodes, subgoal_status):
         )
         for node in nodes
     )
-    return path_signature, str(subgoal_status or "None")
+    return path_signature
 
 
 def _result(status, paths=None, answer="", nodes=None):
@@ -294,13 +292,11 @@ def _accepted_result(verdict, paths, nodes):
     )
 
 
-def try_early_stop(*, root, question, reasoner_model, global_subgoal_state,
+def try_early_stop(*, root, question, reasoner_model,
                    good_threshold, answer_threshold, path_topk=10,
                    verification_cache=None,
                    tree_nodes=None,
 ):
-    has_subgoals = bool(global_subgoal_state and global_subgoal_state.subgoals)
-    all_subgoals_resolved = bool(has_subgoals and global_subgoal_state.all_resolved())
     selected_nodes = get_early_stop_nodes(
         root,
         good_threshold=good_threshold,
@@ -308,30 +304,16 @@ def try_early_stop(*, root, question, reasoner_model, global_subgoal_state,
         nodes=tree_nodes,
     )
 
-    # A completed plan is itself enough to justify a final verification.  In
-    # that case, fall back to the best available paths even when none reaches
-    # good_threshold; the verifier remains the only component that can stop.
-    if all_subgoals_resolved and not selected_nodes:
-        selected_nodes = get_fallback_nodes(
-            root,
-            path_topk=path_topk,
-            nodes=tree_nodes,
-        )
-
+    # Static subgoals have no completion status; only strong paths trigger verification.
     if not selected_nodes:
         return _result("not_triggered")
 
     best_score = max(float(getattr(node, "path_value", 0.0) or 0.0) for node in selected_nodes)
-    plan_ready = all_subgoals_resolved
-    strong_evidence = best_score >= answer_threshold
-    if not (plan_ready or strong_evidence):
+    if best_score < answer_threshold:
         return _result("not_triggered")
 
-    trigger = "plan+strong" if plan_ready and strong_evidence else ("plan" if plan_ready else "strong")
-
     logger.debug(
-        "  Early-stop verifier triggered by %s evidence: best_score=%.3f, paths=%s.",
-        trigger,
+        "  Early-stop verifier triggered: best_score=%.3f, paths=%s.",
         best_score,
         len(selected_nodes),
     )
@@ -347,12 +329,7 @@ def try_early_stop(*, root, question, reasoner_model, global_subgoal_state,
     formatted_paths = [format_path_record(item, idx=idx) for idx, item in enumerate(early_paths, start=1)]
     paths_text = "\n".join(formatted_paths) if formatted_paths else "None"
 
-    subgoal_status = (
-        global_subgoal_state.format_for_early_stop_prompt()
-        if global_subgoal_state
-        else "None"
-    )
-    signature = _verification_signature(selected_nodes, subgoal_status)
+    signature = _verification_signature(selected_nodes)
     verification_cache = verification_cache if verification_cache is not None else {}
     if signature in verification_cache:
         cached_verdict = verification_cache[signature]
@@ -366,7 +343,7 @@ def try_early_stop(*, root, question, reasoner_model, global_subgoal_state,
         logger.debug("  Reuse rejected early-stop verification for unchanged evidence.")
         return _result("rejected")
 
-    quick_user_prompt = verify_answer_user_prompt.substitute(question=question, paths=paths_text, subgoal_status=subgoal_status)
+    quick_user_prompt = verify_answer_user_prompt.substitute(question=question, paths=paths_text)
     raw_verdict = reasoner_model(system_prompt=verify_answer_system_prompt, user_prompt=quick_user_prompt, max_tokens=128)[0]
     verdict = parse_early_stop_verdict(raw_verdict, path_count=len(early_paths))
 
@@ -392,32 +369,11 @@ def try_early_stop(*, root, question, reasoner_model, global_subgoal_state,
 
 # --- evidence ---
 
-def generate_direct_cot_answer(
-    question,
-    reasoner_model,
-    subgoal_answers=None,
-):
+def generate_direct_cot_answer(question, reasoner_model):
     """Answer directly with the shared answer-first CoT protocol."""
-    has_subgoal_answers = bool(
-        subgoal_answers
-        and str(subgoal_answers).strip().lower() != "none"
-    )
-    prompt_template = (
-        direct_answer_user_prompt
-        if has_subgoal_answers
-        else missing_topic_cot_user_prompt
-    )
-    system_prompt = (
-        direct_answer_system_prompt
-        if has_subgoal_answers
-        else missing_topic_cot_system_prompt
-    )
-    user_prompt = prompt_template.substitute(
-        question=question,
-        subgoal_answers=subgoal_answers or "None",
-    )
+    user_prompt = missing_topic_cot_user_prompt.substitute(question=question)
     raw_answer = reasoner_model(
-        system_prompt=system_prompt,
+        system_prompt=missing_topic_cot_system_prompt,
         user_prompt=user_prompt,
         max_tokens=256,
     )[0]
@@ -428,9 +384,8 @@ def generate_final_answer(
     question,
     paths,
     reasoner_model,
-    subgoal_answers="None",
 ):
-    """Generate the final answer directly from selected KG paths and subgoal answers."""
+    """Generate the final answer from selected KG paths, or use direct CoT if none exist."""
     evidence_paths_text = build_path_evidence_text(paths)
 
     if evidence_paths_text:
@@ -438,7 +393,6 @@ def generate_final_answer(
         user_prompt = final_answer_from_paths_user_prompt.substitute(
             question=question,
             evidence_paths=evidence_paths_text,
-            subgoal_answers=subgoal_answers or "None",
         )
         raw_answer = reasoner_model(
             system_prompt=final_answer_from_paths_system_prompt,
@@ -448,9 +402,5 @@ def generate_final_answer(
         answer = extract_answer(raw_answer)
         return answer, "paths"
 
-    answer, _ = generate_direct_cot_answer(
-        question,
-        reasoner_model,
-        subgoal_answers=subgoal_answers,
-    )
-    return answer, "subgoal_answers"
+    answer, _ = generate_direct_cot_answer(question, reasoner_model)
+    return answer, "direct_cot_no_paths"

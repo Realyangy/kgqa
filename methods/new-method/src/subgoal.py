@@ -33,30 +33,18 @@ def anchor_values(anchor):
 # --- subgoal ---
 
 class SubgoalState:
-    """Static initial plan used to guide the transitional entity search."""
+    """Static initial subgoals used only as search guidance."""
     def __init__(self, subgoals):
         self.subgoals = copy.deepcopy(subgoals or [])
-        for sg in self.subgoals:
-            sg["status"] = "unresolved"
-            sg["answers"] = []
 
     def format_for_prompt(self):
         if not self.subgoals:
             return "None"
-        lines = ["[active]"]
+        lines = []
         for sg in self.subgoals:
             deps = ", ".join(sg.get("depend", [])) or "None"
             lines.append(f"{sg.get('id', '')}: {sg.get('goal', '')} | depend: {deps} | answer_type: {sg.get('answer_type', 'entity')}")
-        return "\n".join(lines + ["[required_answers]", "None", "[resolved_background]", "None"])
-
-    def format_for_early_stop_prompt(self):
-        return "None"
-
-    def format_answer_context(self):
-        return "None"
-
-    def all_resolved(self):
-        return False
+        return "\n".join(lines)
 
 
 def _normalize_anchor_text(text):

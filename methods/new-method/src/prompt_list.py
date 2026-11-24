@@ -1,14 +1,13 @@
 from string import Template
 
 
-_SUBGOAL_STATE_FIELD_DEFINITIONS = """SUBGOAL STATE FIELDS
-[active]: current retrieval targets.
-[required_answers]: grounded dependency answers that constrain those targets.
-[resolved_background]: subgoals resolved under the known dependency answers, without implying exhaustive answer enumeration."""
+_STATIC_SUBGOAL_DEFINITIONS = """STATIC SUBGOALS
+These are initial retrieval targets and their planned dependencies, not solved facts.
+Use them to guide retrieval in the context of the original question and the current path."""
 
 
 _FINAL_ANSWER_POLICY = """EVIDENCE AND ANSWER POLICY
-1. Use only the supplied KG evidence and subgoal answers when sufficient. Otherwise, you may supplement them with internal knowledge without contradicting explicit KG evidence.
+1. Use only the supplied KG evidence when sufficient. Otherwise, you may supplement them with internal knowledge without contradicting explicit KG evidence.
 2. Output none if neither source supports a reliable answer.
 3. Use a short phrase or word, matching the entity name when possible. Separate all valid answers with commas.
 
@@ -136,17 +135,16 @@ Output:""")
 
 # 2. Relation and entity pruning
 extract_relation_system_prompt = f"""TASK
-Select relations that best advance the current subgoals.
+Select relations that best advance the static subgoals.
 
 AVAILABLE INFORMATION
 Use only the supplied information, without internal knowledge or assumed KG relations.
 
-{_SUBGOAL_STATE_FIELD_DEFINITIONS}
+{_STATIC_SUBGOAL_DEFINITIONS}
 
 RELATION-SELECTION RULES
-1. Prefer relations that directly answer or advance [active] targets.
-2. Use [required_answers] to connect the current entity or path to dependency answers, or to constrain further retrieval.
-3. Stay consistent with [resolved_background] without selecting relations merely to retrieve the same answers again.
+1. Prefer relations that directly answer or advance the static subgoals.
+2. Use the planned dependencies and the supplied path history to identify useful next relations.
 
 DIRECTION LABELS
 1. outgoing: Current Entity --relation--> ?
@@ -160,9 +158,8 @@ extract_relation_user_prompt = Template("""EXAMPLES:
 Question: Which team did Tim Howard play for?
 Path History: None
 Current Entity: Tim Howard
-Subgoal State:
-[active]
-g1: Find teams Tim Howard played for. | answer_type: sports team
+Static Subgoals:
+g1: Find teams Tim Howard played for. | depend: None | answer_type: sports team
 Candidate Relations:
 [0] sports pro_athlete teams (outgoing)
 [1] sports sports_team_roster player (incoming)
@@ -179,7 +176,7 @@ Path History:
 $path_history
 Current Entity:
 $entity
-Subgoal State:
+Static Subgoals:
 $subgoal_context
 Candidate Relations:
 $relations
@@ -193,12 +190,11 @@ Select the most useful second-hop relations from the CVT mediator candidates.
 AVAILABLE INFORMATION
 Use only the supplied information, without internal knowledge or assumed KG facts, entities, or relations.
 
-{_SUBGOAL_STATE_FIELD_DEFINITIONS}
+{_STATIC_SUBGOAL_DEFINITIONS}
 
 RELATION-SELECTION RULES
-1. Prefer relations that directly answer or advance [active] targets.
-2. Use [required_answers] to connect the current entity or path to dependency answers, or to constrain further retrieval.
-3. Stay consistent with [resolved_background] without selecting relations merely to retrieve the same answers again.
+1. Prefer relations that directly answer or advance the static subgoals.
+2. Use the planned dependencies and the supplied path history to identify useful next relations.
 
 DIRECTION LABELS
 1. outgoing: [CVT] --relation--> ?
@@ -213,9 +209,8 @@ Question: Where did Barack Obama go to school?
 Path History: Barack Obama -> people person education -> [CVT]
 Current Entity: Barack Obama
 First Relation (into CVT): people person education
-Subgoal State:
-[active]
-g1: Find schools attended by Barack Obama. | answer_type: school
+Static Subgoals:
+g1: Find schools attended by Barack Obama. | depend: None | answer_type: school
 Candidate CVT Relations:
 [0] education education institution (outgoing)
 [1] education education degree (outgoing)
@@ -232,7 +227,7 @@ Current Entity:
 $current_entity
 First Relation (into CVT):
 $first_relation
-Subgoal State:
+Static Subgoals:
 $subgoal_context
 Candidate CVT Relations:
 $relations
@@ -242,17 +237,16 @@ Output:""")
 
 
 entity_prune_system_prompt = f"""TASK
-Select candidate next-step entities or values that best advance the current subgoals.
+Select candidate next-step entities or values that best advance the static subgoals.
 
 AVAILABLE INFORMATION
 Use only the supplied information, without internal knowledge or assumed facts, properties, or KG connections about candidates.
 
-{_SUBGOAL_STATE_FIELD_DEFINITIONS}
+{_STATIC_SUBGOAL_DEFINITIONS}
 
 CANDIDATE-SELECTION RULES
-1. Prefer candidates that directly answer or advance [active] targets.
-2. Use [required_answers] to match dependency answers, connect the current path to them, or constrain candidate selection.
-3. Stay consistent with [resolved_background] without selecting candidates merely to retrieve the same answers again.
+1. Prefer candidates that directly answer or advance the static subgoals.
+2. Use the planned dependencies and the supplied path history to identify useful next entities or values.
 
 OUTPUT CONTRACT
 Output exactly TopK distinct candidate indices in ranked order, one per line:
@@ -263,11 +257,9 @@ Question: Which team owned by Malcolm Glazer had Tim Howard playing for it?
 Path History: Tim Howard -> teams -> Manchester United F.C.
 Current Entity: Manchester United F.C.
 Current Relation: sports professional_sports_team owner_s
-Subgoal State:
-[active]
-g2: Among teams in g1, find those owned by Malcolm Glazer. | answer_type: sports team
-[required_answers]
-g1 answers: Manchester United F.C.
+Static Subgoals:
+g1: Find teams Tim Howard played for. | depend: None | answer_type: sports team
+g2: Among teams in g1, find those owned by Malcolm Glazer. | depend: g1 | answer_type: sports team
 Candidate Next Step Paths:
 [0] Malcolm Glazer | local_path=Manchester United F.C. -> sports professional_sports_team owner_s -> Malcolm Glazer
 [1] Manchester | local_path=Manchester United F.C. -> sports sports_team location -> Manchester
@@ -284,7 +276,7 @@ Current Entity:
 $current_entities
 Current Relation:
 $relation
-Subgoal State:
+Static Subgoals:
 $subgoal_context
 Candidate Next Step Paths:
 $candidates
@@ -344,11 +336,7 @@ verify_answer_system_prompt = """TASK
 Determine whether the supplied evidence satisfies all constraints in the original question and supports unambiguous answer(s).
 
 AVAILABLE INFORMATION
-Base the decision only on the supplied reasoning paths and subgoal evidence, considering all of them together.
-
-SUBGOAL-EVIDENCE SEMANTICS
-1. An answer X(Y) means X is dependency-grounded under prerequisite answer Y by the supplied KG evidence.
-2. Answers under [partial] are supported for the listed bindings but do not establish complete coverage.
+Base the decision only on the supplied reasoning paths, considering all of them together.
 
 VERIFICATION RULES
 1. Each answer must satisfy all required relations and constraints under one consistent entity binding; never combine different candidates into one answer.
@@ -372,11 +360,6 @@ Which team owned by Malcolm Glazer has Tim Howard playing for it?
 Reasoning Paths:
 Path 1 (path_value: 1.0): Tim Howard -> sports pro athlete teams -> [CVT] -> sports sports team roster team -> Manchester United F.C. -> sports professional sports team owner s -> Malcolm Glazer
 Path 2 (path_value: 0.8): Tim Howard -> sports pro athlete teams -> [CVT] -> sports sports team roster team -> Everton F.C.
-Subgoal Evidence:
-[resolved]
-g1: Find the teams Tim Howard played for. | answers: Manchester United F.C.; Everton F.C.
-[partial]
-g2: Among the teams found in g1, find those owned by Malcolm Glazer. | answers: Manchester United F.C.(Manchester United F.C.)
 Verdict:
 {
   "stop": false
@@ -386,10 +369,6 @@ Question:
 Which school with the fight song "The Orange and Blue" did Emmitt Smith play for?
 Reasoning Paths:
 Path 1 (path_value: 1.0): Emmitt Smith -> sports pro athlete teams -> [CVT] -> sports sports team roster team -> Florida Gators football -> sports sports team fight song -> The Orange and Blue
-Subgoal Evidence:
-[resolved]
-g1: Find the school teams Emmitt Smith played for. | answers: Florida Gators football
-g2: Among the school teams found in g1, find those whose fight song is "The Orange and Blue". | answers: Florida Gators football(Florida Gators football)
 Verdict:
 {
   "stop": true,
@@ -402,13 +381,11 @@ Question:
 $question
 Reasoning Paths:
 $paths
-Subgoal Evidence:
-$subgoal_status
 Verdict:""")
 
 
 final_answer_from_paths_system_prompt = f"""TASK
-Answer the question directly from the supplied KG evidence paths and subgoal answers.
+Answer the question directly from the supplied KG evidence paths.
 
 {_FINAL_ANSWER_POLICY}"""
 
@@ -416,8 +393,6 @@ final_answer_from_paths_user_prompt = Template("""Question:
 $question
 KG Evidence Paths:
 $evidence_paths
-Subgoal Answers:
-$subgoal_answers
 Answer:""")
 
 
@@ -426,19 +401,3 @@ missing_topic_cot_system_prompt = """You are an AI assistant for knowledge-base 
 missing_topic_cot_user_prompt = Template(
     _DIRECT_COT_FEW_SHOT_PROMPT + "\n\nQ: $question\nA:"
 )
-
-
-direct_answer_system_prompt = missing_topic_cot_system_prompt
-
-direct_answer_user_prompt = Template(
-    _DIRECT_COT_FEW_SHOT_PROMPT
-    + "\n\nACTUAL-INPUT EVIDENCE POLICY"
-    + "\nUse supplied subgoal answers first when they are informative."
-    + "\nIf they are insufficient, use your internal factual knowledge when needed."
-    + "\nDo not override or contradict supported subgoal answers."
-    + "\nSubgoal Answers:\n$subgoal_answers"
-    + "\n\nACTUAL INPUT\nQ: $question\nA:"
-)
-
-
-# 5. Evidence-grounded subgoal answering

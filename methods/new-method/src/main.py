@@ -6,6 +6,7 @@ import random
 import logging
 import hashlib
 import argparse
+import traceback
 from tqdm import tqdm
 from pathlib import Path
 from embedding_model import BiEncoderPairScorer
@@ -129,7 +130,7 @@ def parse_args():
 logger = logging.getLogger(__name__)
 
 
-def run_spar_mcts(args, question, top_ent, model, rerank_model):
+def run_entity_mcts(args, question, top_ent, model, rerank_model, step_history=None):
     logger.info("Current Question: %s", question)
     logger.info("Topic Entity(s): %s", top_ent or {})
 
@@ -149,7 +150,7 @@ def run_spar_mcts(args, question, top_ent, model, rerank_model):
             "best_evidence": [],
             "subgoal_mode": None,
             "num_subgoals": 0,
-            "subgoal_status": [],
+            "initial_subgoals": [],
             "answer_mode": "direct_cot",
             "answer_source": "direct_cot",
             "actual_iterations": 0,
@@ -176,6 +177,7 @@ def run_spar_mcts(args, question, top_ent, model, rerank_model):
         answer_threshold=args.answer_threshold,
         good_threshold=args.good_threshold,
         enable_decom=args.enable_decom,
+        step_history=step_history,
     )
 
     # 子目标分解
@@ -194,8 +196,7 @@ def run_spar_mcts(args, question, top_ent, model, rerank_model):
     if is_valid_answer(finder.early_stop_answer):
         answer, answer_source = finder.early_stop_answer, "early_stop"
     else:
-        subgoal_answers = finder.global_subgoal_state.format_answer_context() if finder.global_subgoal_state else "None"
-        answer, answer_source = generate_final_answer(question, best_paths, model, subgoal_answers)
+        answer, answer_source = generate_final_answer(question, best_paths, model)
 
     logger.info("========== Final Result ==========")
     logger.info("Question: %s", question)
@@ -203,8 +204,8 @@ def run_spar_mcts(args, question, top_ent, model, rerank_model):
         logger.info("Final-answer generation skipped after accepted early stop.")
     elif answer_source == "paths":
         logger.info("Generated final answer directly from selected KG paths.")
-    elif answer_source == "subgoal_answers":
-        logger.info("No selected KG path; used direct answering with available subgoal answers.")
+    elif answer_source == "direct_cot_no_paths":
+        logger.info("No selected KG path; used direct CoT answering.")
     logger.info("Answer: %s", answer)
 
     # 保存结果
@@ -214,8 +215,8 @@ def run_spar_mcts(args, question, top_ent, model, rerank_model):
         "best_evidence": [unpack_path_record(item)[2] for item in best_paths],
         "subgoal_mode": finder.is_complex,
         "num_subgoals": len(finder.global_subgoal_state.subgoals) if finder.global_subgoal_state else 0,
-        "subgoal_status": finder.global_subgoal_state.subgoals if finder.global_subgoal_state else [],
-        "answer_mode": "spar_mcts",
+        "initial_subgoals": subgoals,
+        "answer_mode": "entity_mcts",
         "answer_source": answer_source,
         "actual_iterations": int(getattr(finder, "actual_iterations", 0) or 0),
         "termination_reason": str(getattr(finder, "termination_reason", "unknown") or "unknown"),
@@ -263,7 +264,7 @@ def save_results(path, records):
 # 根据本次实验参数构造运行名称，用于记录实验结果和日志
 def build_run_name(args):
     sample_label = "all" if args.dataset_sample_num is None else args.dataset_sample_num
-    fingerprint_args = {key: value for key, value in vars(args).items() if not key.startswith("_") and key not in {"output_dir", "force_recompute", "save_detail", "run_name", "run_dir"}}
+    fingerprint_args = {key: value for key, value in vars(args).items() if not key.startswith("_") and key not in {"output_dir", "force_recompute", "save_detail", "run_name", "run_dir", "api_key"}}
     fingerprint = hashlib.sha256(json.dumps(fingerprint_args, sort_keys=True).encode()).hexdigest()[:10]
     return f"new-method_data_{args.dataset}_sampleNum_{sample_label}_sampleSeed_{args.dataset_sample_seed}_modelName_{args.model_name.lower()}_{fingerprint}"
 
@@ -303,13 +304,15 @@ def run(args):
         # 执行MCTS并记录结果，无论正确还是错误
         started = time.monotonic()
         tracker = UsageTracker(model)
+        error_traceback = None
+        step_history = [] if args.save_detail else None
         if args.save_detail:
             prompt_history, sparql_history = [], []
             model.set_prompt_history(prompt_history)
             set_sparql_trace(sparql_history)
         try:
             topics = item.get("topic_entity") or {}
-            algorithm_record = run_spar_mcts(args, question, topics, model, rerank_model)
+            algorithm_record = run_entity_mcts(args, question, topics, model, rerank_model, step_history)
             record = {
                 question_key: question,
                 "results": algorithm_record["answer"],
@@ -317,6 +320,7 @@ def run(args):
             }
         except Exception as error:
             logger.exception("Failed to process question: %s", question)
+            error_traceback = traceback.format_exc()
             algorithm_record = None
             record = {
                 question_key: question,
@@ -348,7 +352,9 @@ def run(args):
                         "result": record,
                         "algorithm_record": algorithm_record,
                         "prompt_history": prompt_history,
-                        "sparql_history": sparql_history
+                        "sparql_history": sparql_history,
+                        "step_history": step_history,
+                        "traceback": error_traceback
                         }, stream, ensure_ascii=False, indent=2)
             except Exception:
                 logger.exception("Failed to save details for question: %s", question)

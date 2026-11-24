@@ -13,14 +13,13 @@ from embedding_model import BiEncoderPairScorer
 
 from model import LLM_Client
 from mcts import MCTSPathFinder
-from evidence import unpack_path_record
+from evidence import ground_relation_paths
 from evidence import collect_candidate_records
 from sparql_utils import SPARQLPATH, set_sparql_trace
 from evidence import generate_direct_cot_answer, generate_final_answer
 from utils import (
     disable_net_proxy,
     prepare_dataset,
-    is_valid_answer,
     topic_entity_names,
 )
 from logging_utils import (
@@ -73,14 +72,19 @@ def _finalize_args(args):
         value = getattr(args, option_name)
         if not 0.0 <= value <= 1.0:
             raise argparse.ArgumentTypeError(f"--{option_name} must be in [0, 1].")
-    if args.path_topk < 1:
-        raise argparse.ArgumentTypeError("--path_topk must >= 1.")
+    for option_name in ("path_topk", "relation_topk", "depth", "grounding_rows_per_path"):
+        if getattr(args, option_name) < 1:
+            raise argparse.ArgumentTypeError(f"--{option_name} must be >= 1.")
+    if args.iterations < 0 or args.c_uct < 0:
+        raise argparse.ArgumentTypeError("Iterations and UCT exploration coefficient must be non-negative.")
+    if args.grounding_rows_per_path > 1000:
+        raise argparse.ArgumentTypeError("--grounding_rows_per_path must be <= 1000.")
 
     return args
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="New method: slimmed entity-level SPAR-MCTS baseline")
+    parser = argparse.ArgumentParser(description="MCTS-R: relation-centric Monte Carlo Tree Search for KGQA")
 
     # 硬件环境相关配置
     parser.add_argument("--gpu_id", type=int, default=0, help="Physical GPU index for the local embedding model, e.g. 0 or 1.")
@@ -101,16 +105,17 @@ def parse_args():
     parser.add_argument("--depth", type=int, default=5, help="Maximum KG path depth explored by MCTS.")
     parser.add_argument("--c_uct", type=float, default=0.2, help="UCT exploration coefficient.")
     parser.add_argument("--relation_topk", type=int, default=5, help="Maximum relations selected for expansion at each node.")
-    parser.add_argument("--cvt_relation_topk", type=int, default=2, help="Maximum second-hop relations selected when expanding a CVT mediator.")
-    parser.add_argument("--entity_topk", type=int, default=5, help="Maximum entities kept after entity pruning.")
-    parser.add_argument("--path_topk", type=int, default=5, help="Maximum tree paths supplied to early-stop verification and final-answer fallback when no path reaches --good_threshold; otherwise final answering uses every unique good path.")
+    parser.add_argument("--path_topk", type=int, default=5, help="Maximum relation paths used for structural verification and final grounding.")
 
     # 算法模块相关配置
     parser.add_argument("--enable_decom", action=argparse.BooleanOptionalAction, default=True, help="Enable initial subgoal decomposition before MCTS.")
 
+    parser.add_argument("--enable_early_stop", action=argparse.BooleanOptionalAction, default=True, help="Enable structural relation-path sufficiency judgment; disable for fixed-budget search.")
+    parser.add_argument("--grounding_rows_per_path", type=int, default=30, help="Maximum connected KG bindings supplied per selected relation path after search.")
+
     # 预设的阈值
-    parser.add_argument("--answer_threshold", type=float, default=0.9, help="Early-stop answer threshold on the original 0-1 path-value scale.")
-    parser.add_argument("--good_threshold", type=float, default=0.7, help="Minimum evidence path threshold on the original 0-1 path-value scale.")
+    parser.add_argument("--answer_threshold", type=float, default=0.9, help="Relation-path score threshold for triggering structural early-stop verification.")
+    parser.add_argument("--good_threshold", type=float, default=0.7, help="Minimum relation-path relevance score for selection.")
 
     # 输出相关配置
     parser.add_argument("--force_recompute", action="store_true", help="Ignore a matching existing result file and recompute the selected subset.")
@@ -130,7 +135,7 @@ def parse_args():
 logger = logging.getLogger(__name__)
 
 
-def run_entity_mcts(args, question, top_ent, model, rerank_model, step_history=None):
+def run_relation_mcts(args, question, top_ent, model, rerank_model, step_history=None):
     logger.info("Current Question: %s", question)
     logger.info("Topic Entity(s): %s", top_ent or {})
 
@@ -148,6 +153,8 @@ def run_entity_mcts(args, question, top_ent, model, rerank_model, step_history=N
             "raw_answer": raw_answer,
             "best_path": [],
             "best_evidence": [],
+            "best_relation_paths": [],
+            "grounding": [],
             "subgoal_mode": None,
             "num_subgoals": 0,
             "initial_subgoals": [],
@@ -171,12 +178,11 @@ def run_entity_mcts(args, question, top_ent, model, rerank_model, step_history=N
         max_depth=args.depth,
         c_uct=args.c_uct,
         relation_topk=args.relation_topk,
-        cvt_relation_topk=args.cvt_relation_topk,
-        entity_topk=args.entity_topk,
         path_topk=args.path_topk,
         answer_threshold=args.answer_threshold,
         good_threshold=args.good_threshold,
         enable_decom=args.enable_decom,
+        enable_early_stop=args.enable_early_stop,
         step_history=step_history,
     )
 
@@ -189,34 +195,47 @@ def run_entity_mcts(args, question, top_ent, model, rerank_model, step_history=N
     else:
         logger.info("Decomposed Subgoals: None")
 
-    # MCTS获取路径和答案
+    # MCTS 只搜索关系链，结束后才进行实体落地。
     best_paths = finder.search()
-
-    # 验证答案准确性
-    if is_valid_answer(finder.early_stop_answer):
-        answer, answer_source = finder.early_stop_answer, "early_stop"
-    else:
-        answer, answer_source = generate_final_answer(question, best_paths, model)
+    grounded = ground_relation_paths(
+        best_paths, step_history=step_history, rows_per_path=args.grounding_rows_per_path
+    )
+    # 如果结构早停选中的路径未返回任何有效绑定，尝试树中其他高分路径。
+    if not any(group["instances"] for group in grounded) and finder.termination_reason == "relation_early_stop":
+        from evidence import get_final_answer_nodes, make_path_record
+        from mcts_utils import node_path_key
+        tried = {node_path_key(node) for node in finder.final_answer_nodes}
+        alternatives = [
+            node for node in get_final_answer_nodes(finder.root, 0.0, args.path_topk + len(tried))
+            if node_path_key(node) not in tried
+        ][:args.path_topk]
+        if alternatives:
+            extra_paths = [make_path_record(node) for node in alternatives]
+            extra_grounded = ground_relation_paths(
+                extra_paths, step_history=step_history, rows_per_path=args.grounding_rows_per_path
+            )
+            best_paths.extend(extra_paths)
+            grounded.extend(extra_grounded)
+            finder.final_answer_nodes.extend(alternatives)
+        finder.termination_reason = "relation_early_stop_grounding_fallback"
+    answer, answer_source = generate_final_answer(question, grounded, model)
 
     logger.info("========== Final Result ==========")
     logger.info("Question: %s", question)
-    if answer_source == "early_stop":
-        logger.info("Final-answer generation skipped after accepted early stop.")
-    elif answer_source == "paths":
-        logger.info("Generated final answer directly from selected KG paths.")
-    elif answer_source == "direct_cot_no_paths":
-        logger.info("No selected KG path; used direct CoT answering.")
+    logger.info("Answer source: %s", answer_source)
     logger.info("Answer: %s", answer)
 
     # 保存结果
     record = {
         "answer": answer,
-        "best_path": [unpack_path_record(item)[0] for item in best_paths],
-        "best_evidence": [unpack_path_record(item)[2] for item in best_paths],
+        "best_path": [instance["walk_path"] for group in grounded for instance in group["instances"]],
+        "best_evidence": [instance["walk_path"] for group in grounded for instance in group["instances"]],
+        "best_relation_paths": best_paths,
+        "grounding": grounded,
         "subgoal_mode": finder.is_complex,
         "num_subgoals": len(finder.global_subgoal_state.subgoals) if finder.global_subgoal_state else 0,
         "initial_subgoals": subgoals,
-        "answer_mode": "entity_mcts",
+        "answer_mode": "relation_mcts",
         "answer_source": answer_source,
         "actual_iterations": int(getattr(finder, "actual_iterations", 0) or 0),
         "termination_reason": str(getattr(finder, "termination_reason", "unknown") or "unknown"),
@@ -266,7 +285,7 @@ def build_run_name(args):
     sample_label = "all" if args.dataset_sample_num is None else args.dataset_sample_num
     fingerprint_args = {key: value for key, value in vars(args).items() if not key.startswith("_") and key not in {"output_dir", "force_recompute", "save_detail", "run_name", "run_dir", "api_key"}}
     fingerprint = hashlib.sha256(json.dumps(fingerprint_args, sort_keys=True).encode()).hexdigest()[:10]
-    return f"new-method_data_{args.dataset}_sampleNum_{sample_label}_sampleSeed_{args.dataset_sample_seed}_modelName_{args.model_name.lower()}_{fingerprint}"
+    return f"MCTS-R_data_{args.dataset}_sampleNum_{sample_label}_sampleSeed_{args.dataset_sample_seed}_modelName_{args.model_name.lower()}_{fingerprint}"
 
 
 def run(args):
@@ -312,11 +331,12 @@ def run(args):
             set_sparql_trace(sparql_history)
         try:
             topics = item.get("topic_entity") or {}
-            algorithm_record = run_entity_mcts(args, question, topics, model, rerank_model, step_history)
+            algorithm_record = run_relation_mcts(args, question, topics, model, rerank_model, step_history)
             record = {
                 question_key: question,
                 "results": algorithm_record["answer"],
-                "reasoning_chains": algorithm_record["best_path"]
+                "reasoning_chains": algorithm_record["best_path"],
+                "relation_paths": algorithm_record["best_relation_paths"]
             }
         except Exception as error:
             logger.exception("Failed to process question: %s", question)

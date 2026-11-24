@@ -133,49 +133,43 @@ $decomposition_reason
 Output:""")
 
 
-# 2. Relation and entity pruning
+# 2. Relation pruning
 extract_relation_system_prompt = f"""TASK
-Select relations that best advance the static subgoals.
+Select next relations that best advance the static subgoals and the original question.
 
 AVAILABLE INFORMATION
-Use only the supplied information, without internal knowledge or assumed KG relations.
+Use only the supplied topic entity, existing relation path and candidate relations.
+The variables in the relation path are unknown entities or values, not observed answers.
 
 {_STATIC_SUBGOAL_DEFINITIONS}
 
-RELATION-SELECTION RULES
-1. Prefer relations that directly answer or advance the static subgoals.
-2. Use the planned dependencies and the supplied path history to identify useful next relations.
-
-DIRECTION LABELS
-1. outgoing: Current Entity --relation--> ?
-2. incoming: ? --relation--> Current Entity
-
-OUTPUT CONTRACT
-Output exactly TopK distinct relation indices in ranked order, one per line:
+RULES
+1. Prefer relations that directly advance a required constraint or connect a planned dependency.
+2. Respect each candidate's direction relative to the current path endpoint.
+3. Select exactly TopK distinct indices in descending usefulness, one per line:
 [index]"""
 
-extract_relation_user_prompt = Template("""EXAMPLES:
-Question: Which team did Tim Howard play for?
-Path History: None
-Current Entity: Tim Howard
+extract_relation_user_prompt = Template("""EXAMPLE:
+Question: Which teams did Tim Howard play for?
+Topic Entity: Tim Howard
+Relation Path: Tim Howard -> sports.pro_athlete.teams -> ?e1
 Static Subgoals:
 g1: Find teams Tim Howard played for. | depend: None | answer_type: sports team
 Candidate Relations:
-[0] sports pro_athlete teams (outgoing)
-[1] sports sports_team_roster player (incoming)
-[2] people person nationality (outgoing)
-TopK: 2
+[0] sports.sports_team_roster.team (outgoing)
+[1] sports.sports_team_roster.from (outgoing)
+[2] people.person.nationality (outgoing)
+TopK: 1
 Output:
 [0]
-[1]
 
 ACTUAL INPUT:
 Question:
 $question
-Path History:
-$path_history
-Current Entity:
-$entity
+Topic Entity:
+$topic_entity
+Relation Path:
+$relation_path
 Static Subgoals:
 $subgoal_context
 Candidate Relations:
@@ -184,123 +178,24 @@ TopK: $topk
 Output:""")
 
 
-cvt_relation_system_prompt = f"""TASK
-Select the most useful second-hop relations from the CVT mediator candidates.
-
-AVAILABLE INFORMATION
-Use only the supplied information, without internal knowledge or assumed KG facts, entities, or relations.
-
-{_STATIC_SUBGOAL_DEFINITIONS}
-
-RELATION-SELECTION RULES
-1. Prefer relations that directly answer or advance the static subgoals.
-2. Use the planned dependencies and the supplied path history to identify useful next relations.
-
-DIRECTION LABELS
-1. outgoing: [CVT] --relation--> ?
-2. incoming: ? --relation--> [CVT]
-
-OUTPUT CONTRACT
-Output exactly TopK distinct relation indices in ranked order, one per line:
-[index]"""
-
-cvt_relation_user_prompt = Template("""EXAMPLES:
-Question: Where did Barack Obama go to school?
-Path History: Barack Obama -> people person education -> [CVT]
-Current Entity: Barack Obama
-First Relation (into CVT): people person education
-Static Subgoals:
-g1: Find schools attended by Barack Obama. | depend: None | answer_type: school
-Candidate CVT Relations:
-[0] education education institution (outgoing)
-[1] education education degree (outgoing)
-TopK: 1
-Output:
-[0]
-
-ACTUAL INPUT:
-Question:
-$question
-Path History:
-$path_history
-Current Entity:
-$current_entity
-First Relation (into CVT):
-$first_relation
-Static Subgoals:
-$subgoal_context
-Candidate CVT Relations:
-$relations
-TopK:
-$topk
-Output:""")
-
-
-entity_prune_system_prompt = f"""TASK
-Select candidate next-step entities or values that best advance the static subgoals.
-
-AVAILABLE INFORMATION
-Use only the supplied information, without internal knowledge or assumed facts, properties, or KG connections about candidates.
-
-{_STATIC_SUBGOAL_DEFINITIONS}
-
-CANDIDATE-SELECTION RULES
-1. Prefer candidates that directly answer or advance the static subgoals.
-2. Use the planned dependencies and the supplied path history to identify useful next entities or values.
-
-OUTPUT CONTRACT
-Output exactly TopK distinct candidate indices in ranked order, one per line:
-[index]"""
-
-entity_prune_user_prompt = Template("""EXAMPLES:
-Question: Which team owned by Malcolm Glazer had Tim Howard playing for it?
-Path History: Tim Howard -> teams -> Manchester United F.C.
-Current Entity: Manchester United F.C.
-Current Relation: sports professional_sports_team owner_s
-Static Subgoals:
-g1: Find teams Tim Howard played for. | depend: None | answer_type: sports team
-g2: Among teams in g1, find those owned by Malcolm Glazer. | depend: g1 | answer_type: sports team
-Candidate Next Step Paths:
-[0] Malcolm Glazer | local_path=Manchester United F.C. -> sports professional_sports_team owner_s -> Malcolm Glazer
-[1] Manchester | local_path=Manchester United F.C. -> sports sports_team location -> Manchester
-TopK: 1
-Output:
-[0]
-
-ACTUAL INPUT:
-Question:
-$question
-Path History:
-$path_history
-Current Entity:
-$current_entities
-Current Relation:
-$relation
-Static Subgoals:
-$subgoal_context
-Candidate Next Step Paths:
-$candidates
-TopK:
-$topk
-Output:""")
-
-
-# 3. Original-question path evaluation
+# 3. Batch relation-path evaluation
 evaluate_system_prompt = """TASK
-Score how useful each candidate KG reasoning path is for answering the original question.
+Score each directed relation path, anchored at its topic entity, for answering the original question.
 
 AVAILABLE INFORMATION
-Judge only from the original question and the given path. Do not use internal knowledge to supply missing facts or infer unshown relations.
+The path is a connected KG relation pattern with unknown entity/value bindings.
+Judge semantic relevance, direction and structural coverage of the question, not actual answer correctness.
+Do not invent intermediate or final entities, facts or unshown relations.
 
 ABSOLUTE SCORING RUBRIC
-0.0-0.3: Irrelevant, incorrect, or misleading. The path does not provide meaningful evidence for any required constraint in the original question.
-0.4-0.6: Weakly useful. The path is related to the question or moves in a plausible direction, but it does not explicitly verify a required constraint.
-0.7-0.8: Strong partial evidence. The path explicitly verifies at least one required constraint, but it does not satisfy all constraints needed to answer the original question.
-0.9-1.0: Answer-level evidence. The path explicitly satisfies all required relations and constraints in the original question using one consistent entity binding, and directly supports the final answer.
+0.0-0.3: Irrelevant, misleading, or incorrect relation semantics/direction.
+0.4-0.6: Plausible intermediate path, but not yet covering a key requested relation.
+0.7-0.8: Covers a key relation or part of the required structure; important constraints still need a path or grounding.
+0.9-1.0: Structurally suitable to retrieve or verify the answer, covering the question's required relation pattern. A high score is not a guarantee that bindings satisfy the constraints.
 
 SCORING RULES
-1. Score each path independently using the absolute rubric, without normalizing across candidates. All paths may score high or low.
-2. Include every candidate index exactly once, with its score to one decimal place and no additional fields or text.
+1. Score independently on the absolute scale, without normalization.
+2. Include each candidate index exactly once, using a score to one decimal place.
 
 OUTPUT CONTRACT
 Output valid JSON only:
@@ -309,94 +204,78 @@ Output valid JSON only:
   {"index": 1, "score": 0.0}
 ]"""
 
-evaluate_user_prompt = Template("""EXAMPLES:
+evaluate_user_prompt = Template("""EXAMPLE:
 Question:
-Which team owned by Malcolm Glazer has Tim Howard playing for it?
-Candidate Paths:
-[0] Tim Howard -> sports pro_athlete teams -> [CVT] -> sports sports_team_roster team -> Manchester United F.C. -> sports professional_sports_team owner_s -> Malcolm Glazer
-[1] Malcolm Glazer <- sports professional_sports_team owner_s <- Manchester United F.C.
-[2] Tim Howard -> people person nationality -> United States
+Which teams did Tim Howard play for?
+Candidate Relation Paths:
+[0] Tim Howard -> sports.pro_athlete.teams -> ?e1 -> sports.sports_team_roster.team -> ?e2
+[1] Tim Howard -> sports.pro_athlete.teams -> ?e1
+[2] Tim Howard -> people.person.nationality -> ?e1
 Output:
 [
   {"index": 0, "score": 1.0},
-  {"index": 1, "score": 0.8},
+  {"index": 1, "score": 0.7},
   {"index": 2, "score": 0.1}
 ]
 
 ACTUAL INPUT:
 Question:
 $question
-Candidate Paths:
+Candidate Relation Paths:
 $candidate_paths
 Output:""")
 
 
-# 4. Early stopping and final answering
+# 4. Structural sufficiency and grounded final answering
 verify_answer_system_prompt = """TASK
-Determine whether the supplied evidence satisfies all constraints in the original question and supports unambiguous answer(s).
+Determine whether the supplied relation paths jointly cover the relation structure required by the original question, so relation exploration may stop and grounding may begin.
 
-AVAILABLE INFORMATION
-Base the decision only on the supplied reasoning paths, considering all of them together.
-
-VERIFICATION RULES
-1. Each answer must satisfy all required relations and constraints under one consistent entity binding; never combine different candidates into one answer.
-2. Missing, unsupported, or ambiguous constraints make the evidence insufficient.
+RULES
+1. Inspect topic anchors, relation direction, variable roles and all requested constraints.
+2. Paths are patterns, not concrete evidence; do not assume a variable equals a named entity or that different paths have matching bindings.
+3. A complete pattern may still require entity grounding, joining compatible bindings, or filtering values. Stop only if the selected structures could support these operations without retrieving a missing relation.
+4. Do not output an answer.
 
 OUTPUT CONTRACT
-If information is sufficient, output JSON only:
-{
-  "stop": true,
-  "answer": "answer text",
-  "paths": [1, 2]
-}
-If information is insufficient, output JSON only:
-{
-  "stop": false
-}"""
+If structurally sufficient, output JSON only: {"stop": true, "paths": [1, 2]}
+Otherwise output JSON only: {"stop": false}
+Path indices are one-based."""
 
 verify_answer_user_prompt = Template("""EXAMPLES:
-Question:
-Which team owned by Malcolm Glazer has Tim Howard playing for it?
-Reasoning Paths:
-Path 1 (path_value: 1.0): Tim Howard -> sports pro athlete teams -> [CVT] -> sports sports team roster team -> Manchester United F.C. -> sports professional sports team owner s -> Malcolm Glazer
-Path 2 (path_value: 0.8): Tim Howard -> sports pro athlete teams -> [CVT] -> sports sports team roster team -> Everton F.C.
+Question: Which teams did Tim Howard play for that were owned by Malcolm Glazer?
+Relation Paths:
+Path 1: Tim Howard -> sports.pro_athlete.teams -> ?e1 -> sports.sports_team_roster.team -> ?e2
 Verdict:
-{
-  "stop": false
-}
+{"stop": false}
 
-Question:
-Which school with the fight song "The Orange and Blue" did Emmitt Smith play for?
-Reasoning Paths:
-Path 1 (path_value: 1.0): Emmitt Smith -> sports pro athlete teams -> [CVT] -> sports sports team roster team -> Florida Gators football -> sports sports team fight song -> The Orange and Blue
+Question: Which teams did Tim Howard play for?
+Relation Paths:
+Path 1: Tim Howard -> sports.pro_athlete.teams -> ?e1 -> sports.sports_team_roster.team -> ?e2
 Verdict:
-{
-  "stop": true,
-  "answer": "Florida Gators football",
-  "paths": [1]
-}
+{"stop": true, "paths": [1]}
 
 ACTUAL INPUT:
 Question:
 $question
-Reasoning Paths:
+Relation Paths:
 $paths
 Verdict:""")
 
-
 final_answer_from_paths_system_prompt = f"""TASK
-Answer the question directly from the supplied KG evidence paths.
+Answer the question from the grounded KG paths. Each binding row is one connected path instance.
+Do not combine incompatible entity bindings into an answer. Use the intermediate entities when needed.
+An unnamed entity ID is not a readable answer. A limited list of bindings is not proof of exhaustive coverage.
 
 {_FINAL_ANSWER_POLICY}"""
 
 final_answer_from_paths_user_prompt = Template("""Question:
 $question
-KG Evidence Paths:
+Grounded KG Evidence Paths:
 $evidence_paths
 Answer:""")
 
 
-missing_topic_cot_system_prompt = """You are an AI assistant for knowledge-base question answering. Reason carefully and keep the final answer concise."""
+missing_topic_cot_system_prompt = "You are an AI assistant for knowledge-base question answering. Reason carefully and keep the final answer concise."
 
 missing_topic_cot_user_prompt = Template(
     _DIRECT_COT_FEW_SHOT_PROMPT + "\n\nQ: $question\nA:"

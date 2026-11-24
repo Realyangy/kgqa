@@ -62,3 +62,46 @@ def get_entity_name(entity_id):
     if not is_freebase_entity_id(entity_id):
         return entity_id
     return _get_freebase_entity_name(entity_id)
+
+
+
+def get_entity_names(entity_ids):
+    """Batch English label lookup for grounded bindings (not used in MCTS)."""
+    from mcts_utils import FREEBASE_NS, freebase_term
+
+    ids = list(dict.fromkeys(entity_ids))
+    names = {}
+    for offset in range(0, len(ids), 100):
+        batch = ids[offset:offset + 100]
+        values = " ".join(freebase_term(eid) for eid in batch)
+        query = f"""PREFIX ns: <{FREEBASE_NS}>
+SELECT DISTINCT ?entity ?name ?priority WHERE {{
+  VALUES ?entity {{ {values} }}
+  {{
+    ?entity ns:type.object.name ?name .
+    BIND(1 AS ?priority)
+  }} UNION {{
+    ?entity ns:common.topic.alias ?name .
+    BIND(2 AS ?priority)
+  }} UNION {{
+    ?entity <http://www.w3.org/2002/07/owl#sameAs> ?alias .
+    ?alias ns:type.object.name ?name .
+    BIND(3 AS ?priority)
+  }}
+  FILTER(isLiteral(?name) && (lang(?name) = "" || langMatches(lang(?name), "en")))
+}}"""
+        best = {}
+        for row in execute_sparql(query):
+            entity = row.get("entity", {}).get("value", "")
+            if not entity.startswith(FREEBASE_NS):
+                continue
+            eid = entity[len(FREEBASE_NS):]
+            name = row.get("name", {}).get("value", "").strip()
+            if eid not in batch or not name:
+                continue
+            rank = (int(row.get("priority", {}).get("value", 3)), name)
+            if eid not in best or rank < best[eid]:
+                best[eid] = rank
+        for eid in batch:
+            names[eid] = best[eid][1] if eid in best else eid
+    return names

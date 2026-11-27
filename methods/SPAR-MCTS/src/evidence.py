@@ -88,7 +88,7 @@ def build_path_evidence_text(paths):
 def make_path_record(node):
     return (
         node.walk_path,
-        float(getattr(node, "path_value", 0.0) or 0.0),
+        float(node.path_value),
         node.evidence_path,
     )
 
@@ -163,8 +163,8 @@ def real_tree_nodes(root, require_path=False):
     return [
         node
         for node in collect_nodes(root, include_empty=not require_path)
-        if not getattr(node, "is_virtual_root", False)
-        and (not require_path or getattr(node, "walk_path", None))
+        if not node.is_virtual_root
+        and (not require_path or node.walk_path)
     ]
 
 
@@ -183,18 +183,15 @@ def collect_candidate_records(root, selected_nodes=None):
             continue
         seen.add(path_key)
         matched_subgoals = []
-        for hit in getattr(node, "subgoal_answer_hits", []) or []:
+        for hit in node.subgoal_answer_hits:
             subgoal_id = str(hit.get("subgoal_id", "") or "").strip()
             if subgoal_id and subgoal_id not in matched_subgoals:
                 matched_subgoals.append(subgoal_id)
         records.append({
             "candidate_id": len(records),
-            "entity_id": str(getattr(node, "entity_id", "") or "").strip(),
-            "entity_name": str(getattr(node, "entity_name", "") or "").strip(),
-            "path_value": round(
-                float(getattr(node, "path_value", 0.0) or 0.0),
-                6,
-            ),
+            "entity_id": str(node.entity_id or "").strip(),
+            "entity_name": str(node.entity_name or "").strip(),
+            "path_value": round(float(node.path_value), 6),
             "matched_subgoals": matched_subgoals,
             "in_final_evidence": path_key in selected_keys,
         })
@@ -206,7 +203,7 @@ def _rank_unique_nodes(node, minimum_score=None, nodes=None):
     selected = []
     seen = set()
     for item in nodes:
-        path_score = float(getattr(item, "path_value", 0.0) or 0.0)
+        path_score = float(item.path_value)
         if minimum_score is not None and path_score < minimum_score:
             continue
         identity = node_path_key(item)
@@ -216,7 +213,7 @@ def _rank_unique_nodes(node, minimum_score=None, nodes=None):
         selected.append(item)
     selected.sort(
         key=lambda item: (
-            float(getattr(item, "path_value", 0.0) or 0.0),
+            float(item.path_value),
             len(item.walk_path),
         ),
         reverse=True,
@@ -274,7 +271,7 @@ def _verification_signature(nodes, subgoal_status):
     path_signature = tuple(
         (
             node_path_key(node),
-            round(float(getattr(node, "path_value", 0.0) or 0.0), 3),
+            round(float(node.path_value), 3),
         )
         for node in nodes
     )
@@ -327,7 +324,7 @@ def try_early_stop(*, root, question, reasoner_model, global_subgoal_state,
     if not selected_nodes:
         return _result("not_triggered")
 
-    best_score = max(float(getattr(node, "path_value", 0.0) or 0.0) for node in selected_nodes)
+    best_score = max(float(node.path_value) for node in selected_nodes)
     plan_ready = all_subgoals_resolved
     strong_evidence = best_score >= answer_threshold
     if not (plan_ready or strong_evidence):

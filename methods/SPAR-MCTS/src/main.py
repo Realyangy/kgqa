@@ -266,14 +266,14 @@ def run_spar_mcts(args, question, top_ent, model, rerank_model):
         "subgoal_status": finder.global_subgoal_state.subgoals if finder.global_subgoal_state else [],
         "answer_mode": "spar_mcts",
         "answer_source": answer_source,
-        "actual_iterations": int(getattr(finder, "actual_iterations", 0) or 0),
-        "termination_reason": str(getattr(finder, "termination_reason", "unknown") or "unknown"),
-        "recovery_events": list(getattr(finder, "recovery_events", []) or []),
-        "tree_candidates": collect_candidate_records(finder.root, selected_nodes=getattr(finder, "final_answer_nodes", [])),
+        "actual_iterations": finder.actual_iterations,
+        "termination_reason": finder.termination_reason,
+        "recovery_events": list(finder.recovery_events),
+        "tree_candidates": collect_candidate_records(finder.root, selected_nodes=finder.final_answer_nodes),
     }
     if args.enable_subgoal_replan:
-        record["replan_count"] = getattr(finder, "replan_count", 0)
-        record["replan_events"] = getattr(finder, "replan_events", [])
+        record["replan_count"] = finder.replan_count
+        record["replan_events"] = finder.replan_events
 
     return record
 

@@ -1436,21 +1436,21 @@ def build_new_answer_candidates(children):
     seen_record_keys = set()
 
     for child in children or []:
-        evidence_path = list(getattr(child, "evidence_path", []) or [])
+        evidence_path = list(child.evidence_path)
         record_key = node_path_key(child)
         if record_key in seen_record_keys:
             continue
         seen_record_keys.add(record_key)
 
-        entity = dict(getattr(child, "entity_info", None) or {})
+        entity = dict(child.entity_info)
         entity_id = str(entity.get("entity_id", "")).strip()
         entity_name = str(entity.get("entity_name", "")).strip()
         if not entity_id or not entity_name or entity_name == "Unknown":
             continue
 
-        walk_path = list(getattr(child, "walk_path", []) or [])
+        walk_path = list(child.walk_path)
         evidence_path = evidence_path or walk_path
-        path_value = float(getattr(child, "path_value", 0.0) or 0.0)
+        path_value = float(child.path_value)
         walk_path_text = format_reasoning_path(walk_path, fallback_sep=", ") if walk_path else "None"
         evidence_path_text = format_reasoning_path(evidence_path, fallback_sep=", ") if evidence_path else "None"
 
@@ -1458,7 +1458,7 @@ def build_new_answer_candidates(children):
         seen_entity_ids = set()
         node = child
         while node is not None:
-            ne = getattr(node, "entity_info", None) or {}
+            ne = node.entity_info
             node_entity_id = str(ne.get("entity_id", "")).strip()
             node_entity_name = str(ne.get("entity_name", "")).strip()
 
@@ -1468,7 +1468,7 @@ def build_new_answer_candidates(children):
                     "entity_id": node_entity_id,
                     "entity_name": node_entity_name,
                 })
-            node = getattr(node, "parent", None)
+            node = node.parent
         path_entities.reverse()
 
         candidates.append({
@@ -1812,7 +1812,7 @@ def _root_has_dependency_hit(root, dependency_ids):
         node = stack.pop()
         if any(
             hit.get("subgoal_id") in dependency_ids
-            for hit in getattr(node, "subgoal_answer_hits", []) or []
+            for hit in node.subgoal_answer_hits
         ):
             return True
         stack.extend(node.children)
@@ -1924,18 +1924,18 @@ def match_path(subgoal_answers, child_node):
     entity_ids, entity_names = set(), set()
     node = child_node
     while node is not None:
-        entity = getattr(node, "entity_info", None) or {}
+        entity = node.entity_info
         entity_id = str(entity.get("entity_id", "") or "").strip()
         entity_name = str(entity.get("entity_name", "") or "").strip()
         if entity_id:
             entity_ids.add(entity_id)
         if entity_name and entity_name != "Unknown":
             entity_names.add(normalize_name(entity_name))
-        node = getattr(node, "parent", None)
+        node = node.parent
 
     entity_ids.update(
         str(entity_id).strip()
-        for entity_id in getattr(child_node, "visited_ids", None) or set()
+        for entity_id in child_node.visited_ids
         if entity_id
     )
 
@@ -2006,7 +2006,7 @@ def attach_subgoal_answer_hits(
 
     for child in nodes:
         current_hits = {}
-        for old_hit in getattr(child, "subgoal_answer_hits", []) or []:
+        for old_hit in child.subgoal_answer_hits:
             key = (old_hit.get("subgoal_id"), old_hit.get("answer_key"))
             current = current_retrieval_answers.get(key)
             if current:
@@ -2056,7 +2056,7 @@ def _downstream_consumers(subgoal_id, global_state, unresolved_only=False):
 
 def incremental_subgoal_hits(child):
     """Return evidence-grounded hits introduced here rather than inherited."""
-    parent = getattr(child, "parent", None)
+    parent = child.parent
     parent_hit_keys = {
         key
         for key in (
@@ -2067,7 +2067,7 @@ def incremental_subgoal_hits(child):
     }
 
     child_hit_by_key = {}
-    for hit in getattr(child, "subgoal_answer_hits", []) or []:
+    for hit in child.subgoal_answer_hits:
         key = _hit_key(hit)
         if key:
             child_hit_by_key[key] = hit
@@ -2083,7 +2083,7 @@ def can_expand_after_progress(child, global_state):
         return True
 
     # A non-entity answer can provide progress credit but cannot seed KG search.
-    if not is_freebase_entity_id(getattr(child, "entity_id", "")):
+    if not is_freebase_entity_id(child.entity_id):
         return False
 
     subgoals = _subgoal_by_id(global_state)
@@ -2209,8 +2209,8 @@ def fused_value(path_value, progress_credit, progress_alpha=0.0):
 def refresh_node_fused_value(node, progress_alpha=0.0):
     """Synchronize a node's explicit fused value after score/credit updates."""
     node.fused_value = fused_value(
-        getattr(node, "path_value", 0.0),
-        getattr(node, "progress_credit", 0.0),
+        node.path_value,
+        node.progress_credit,
         progress_alpha,
     )
     return node.fused_value

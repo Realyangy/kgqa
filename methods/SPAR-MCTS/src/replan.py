@@ -353,14 +353,14 @@ def _normalize_string_list(value, field_name):
 
 def _node_value_sort_key(node):
     return (
-        float(getattr(node, "path_value", 0.0) or 0.0),
-        len(getattr(node, "walk_path", []) or []),
+        float(node.path_value),
+        len(node.walk_path),
     )
 
 
 def _matched_subgoal_ids(node):
     matched_subgoals = []
-    for hit in getattr(node, "subgoal_answer_hits", []) or []:
+    for hit in node.subgoal_answer_hits:
         subgoal_id = str(hit.get("subgoal_id", "") or "").strip()
         if subgoal_id and subgoal_id not in matched_subgoals:
             matched_subgoals.append(subgoal_id)
@@ -539,15 +539,15 @@ def collect_replan_evidence(nodes, path_topk=10):
         records.append({
             "index": index,
             "terminal_entity": str(
-                getattr(node, "entity_name", "") or ""
+                node.entity_name or ""
             ).strip(),
             "path_value": round(
-                float(getattr(node, "path_value", 0.0) or 0.0),
+                float(node.path_value),
                 3,
             ),
             "matched_subgoals": matched_subgoals,
             "path": format_reasoning_path(
-                getattr(node, "walk_path", []) or [],
+                node.walk_path,
                 fallback_sep=", ",
                 relation_style="readable",
             ),
@@ -728,7 +728,7 @@ def reproject_after_plan_change(search, tree_nodes=None):
     matched_nodes = [
         node
         for node in old_nodes
-        if getattr(node, "walk_path", None)
+        if node.walk_path
         and incremental_subgoal_hits(node)
     ]
     answer_count_after = _grounded_answer_count(
@@ -799,7 +799,7 @@ def reproject_after_plan_change(search, tree_nodes=None):
         "entities": entities,
     }
     evaluated_path_count = sum(
-        bool(getattr(node, "walk_path", None))
+        bool(node.walk_path)
         for node in retained_nodes
     )
     reuse_summary = {
@@ -929,7 +929,7 @@ def _ancestor_closure(nodes):
     retained = set()
     for node in nodes:
         current = node
-        while current and not getattr(current, "is_virtual_root", False):
+        while current and not current.is_virtual_root:
             retained.add(current)
             current = current.parent
     return retained
@@ -941,7 +941,7 @@ def _prune_to_nodes(root, retained):
         parent = queue.popleft()
         parent.children = [
             child
-            for child in getattr(parent, "children", []) or []
+            for child in parent.children
             if child in retained
         ]
         queue.extend(parent.children)
@@ -949,11 +949,11 @@ def _prune_to_nodes(root, retained):
 
 def _breadth_first_real_nodes(root):
     nodes = []
-    queue = deque(getattr(root, "children", []) or [])
+    queue = deque(root.children)
     while queue:
         node = queue.popleft()
         nodes.append(node)
-        queue.extend(getattr(node, "children", []) or [])
+        queue.extend(node.children)
     return nodes
 
 
@@ -961,8 +961,8 @@ def _node_entities(nodes):
     entities = []
     for node in nodes:
         entity = (
-            str(getattr(node, "entity_name", "") or "").strip()
-            or str(getattr(node, "entity_id", "") or "").strip()
+            str(node.entity_name or "").strip()
+            or str(node.entity_id or "").strip()
         )
         if entity and entity not in entities:
             entities.append(entity)

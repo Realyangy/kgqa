@@ -185,11 +185,11 @@ class MCTSPathFinder:
             for node in tree_nodes or []
         )
         payload = (
-            getattr(self, "question", ""),
+            self.question,
             int(iteration),
             (
                 progress_signature(self.global_subgoal_state)
-                if hasattr(self.global_subgoal_state, "subgoals")
+                if self.global_subgoal_state is not None
                 else ()
             ),
             path_keys,
@@ -210,8 +210,6 @@ class MCTSPathFinder:
         }
 
     def _record_recovery_event(self, event):
-        if not hasattr(self, "recovery_events"):
-            self.recovery_events = []
         event.setdefault("event_id", len(self.recovery_events) + 1)
         self.recovery_events.append(event)
 
@@ -226,7 +224,7 @@ class MCTSPathFinder:
         return [
             root
             for root in self.root.children
-            if getattr(root, "root_active", True)
+            if root.root_active
         ]
 
     def _get_subgoal_context(self):
@@ -496,7 +494,7 @@ class MCTSPathFinder:
             logger.info("  Replan triggered after the full-tree information check found no progress.")
         else:
             logger.info("  Replan triggered directly with full-tree evidence coordination disabled.")
-        replan_events = getattr(self.replanner, "replan_events", [])
+        replan_events = self.replanner.replan_events
         replan_event_count_before = len(replan_events)
         revision_started, revision_tracker = self._recovery_stage_tracker()
         action = self.replanner.try_replan(
@@ -511,7 +509,7 @@ class MCTSPathFinder:
                 revision_tracker,
             ),
         }
-        replan_events = getattr(self.replanner, "replan_events", [])
+        replan_events = self.replanner.replan_events
         if len(replan_events) > replan_event_count_before:
             recovery_event["replan_event_id"] = (
                 replan_events[-1].get("event_id")
@@ -748,7 +746,7 @@ class MCTSPathFinder:
 
         candidate_children = node.children
         if node.is_virtual_root:
-            candidate_children = [child for child in node.children if getattr(child, "root_active", True)]
+            candidate_children = [child for child in node.children if child.root_active]
 
         expandable_children = [child for child in candidate_children if self._has_expandable_node(child)]
         if not expandable_children:

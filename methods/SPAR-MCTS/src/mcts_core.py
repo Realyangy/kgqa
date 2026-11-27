@@ -163,9 +163,9 @@ def reopen_nodes(search, nodes):
         node_identity = id(node)
         if (
             node_identity in seen
-            or getattr(node, "is_virtual_root", False)
+            or node.is_virtual_root
             or node.is_terminal(search.max_depth)
-            or not is_freebase_entity_id(getattr(node, "entity_id", ""))
+            or not is_freebase_entity_id(node.entity_id)
         ):
             continue
         seen.add(node_identity)
@@ -173,11 +173,7 @@ def reopen_nodes(search, nodes):
 
     for node in reopened:
         ancestor = node.parent
-        while ancestor and not getattr(
-            ancestor,
-            "is_virtual_root",
-            False,
-        ):
+        while ancestor and not ancestor.is_virtual_root:
             ancestor.is_fully_expanded = True
             ancestor = ancestor.parent
 
@@ -838,16 +834,16 @@ def rebuild_statistics(root, nodes):
     root.uct_visits = 0
 
     retained = set(nodes)
-    queue = deque(getattr(root, "children", []) or [])
+    queue = deque(root.children)
     while queue:
         level = []
         for _ in range(len(queue)):
             node = queue.popleft()
-            queue.extend(getattr(node, "children", []) or [])
+            queue.extend(node.children)
             if (
                 node in retained
                 and node.parent is not None
-                and getattr(node, "walk_path", None)
+                and node.walk_path
             ):
                 level.append((node, node.fused_value))
         if level:
